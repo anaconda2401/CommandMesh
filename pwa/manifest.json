@@ -1,0 +1,16 @@
+{
+    "name": "CommandMesh",
+    "short_name": "Mesh.Net",
+    "start_url": "./index.html",
+    "display": "standalone",
+    "background_color": "#0f0f0f",
+    "theme_color": "#0f0f0f",
+    "description": "A secure, cross-network device controller.",
+    "icons": [
+        {
+            "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iIzBmMGYwZiIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjQwIiBmaWxsPSJub25lIiBzdHJva2U9IiMwMGZmYWEiIHN0cm9rZS13aWR0aD0iOCIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjE1IiBmaWxsPSIjMDBmZmFhIi8+PC9zdmc+",
+            "sizes": "192x192",
+            "type": "image/svg+xml"
+        }
+    ]
+}

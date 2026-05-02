@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CommandMesh</title>
+    
+    <!-- Link App Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- External Libraries: MQTT & Cryptography -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    
+    <!-- Load Public Config -->
+    <script src="config.js"></script>
+    
+    <style>
+        :root { --bg: #0f0f0f; --surface: #1e1e1e; --primary: #00ffaa; --text: #ffffff; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        
+        /* Layout Grids */
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 400px; }
+        .section-header { grid-column: span 2; font-size: 12px; color: #888; text-transform: uppercase; margin-top: 15px; margin-bottom: -5px; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        
+        /* UI Elements */
+        button { background: var(--surface); color: var(--text); border: 1px solid #333; padding: 15px; border-radius: 10px; font-size: 15px; cursor: pointer; transition: 0.2s; }
+        button:active { background: var(--primary); color: #000; border-color: var(--primary); transform: scale(0.96); }
+        input { width: 100%; padding: 12px; background: #222; color: #fff; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; margin-bottom: 10px; font-size: 14px;}
+        .hidden { display: none !important; }
+        
+        /* Device List Styling */
+        .device-card { background: var(--surface); border: 1px solid #333; border-radius: 10px; padding: 15px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; width: 100%; max-width: 400px; box-sizing: border-box;}
+        .device-card:active { border-color: var(--primary); }
+        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .online { background-color: var(--primary); box-shadow: 0 0 8px var(--primary); }
+        .offline { background-color: #555; }
+        
+        /* App Header */
+        .header { display: flex; justify-content: space-between; width: 100%; max-width: 400px; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; align-items: center;}
+        .header-btn { border: none; background: none; padding: 0; font-size: 14px; cursor: pointer; }
+        
+        /* D-Pad Styling */
+        .dpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; max-width: 250px; margin: 10px auto; grid-column: span 2; }
+        .dpad button { padding: 15px 0; font-size: 18px; display: flex; justify-content: center; align-items: center; }
+        .dpad .center { background: var(--primary); color: var(--bg); font-weight: bold; }
+        .empty-space { background: none; border: none; }
+    </style>
+</head>
+<body>
+
+    <!-- 1. Secure Login UI -->
+    <div id="setupView" class="grid">
+        <h2 style="grid-column: span 2; color: var(--primary); text-align: center; font-weight: 400; margin-bottom: 0;">CommandMesh</h2>
+        <p style="grid-column: span 2; text-align: center; font-size: 12px; color: #888; margin-top: 0;">Private Device Network</p>
+        
+        <div style="grid-column: span 2;">
+            <input type="text" id="userIn" placeholder="HiveMQ Username">
+            <input type="password" id="passIn" placeholder="HiveMQ Password">
+            <input type="password" id="secretIn" placeholder="Mesh Secret (HMAC Key)">
+            <button onclick="saveAndConnect()" style="width: 100%; background: #333; margin-top: 10px;">Connect to Mesh</button>
+        </div>
+    </div>
+
+    <!-- Main Navigation Header -->
+    <div class="header hidden" id="appHeader">
+        <button id="backBtn" class="header-btn hidden" onclick="showNetwork()" style="color: var(--primary);">← Network</button>
+        <span id="titleText" style="font-family: monospace; font-size: 16px;">Mesh.Net</span>
+        <button onclick="logout()" class="header-btn" style="color: #888;">Logout</button>
+    </div>
+
+    <!-- 2. Device Discovery & Network View -->
+    <div id="networkView" style="width: 100%; max-width: 400px;" class="hidden">
+        <div id="statusText" style="font-size: 12px; color: #888; margin-bottom: 15px;">🟡 Scanning network...</div>
+        <div id="deviceContainer">
+            <!-- Discovered devices inject here -->
+        </div>
+    </div>
+
+    <!-- 3. Dynamic Remote Control View -->
+    <div id="remoteView" class="grid hidden">
+        <h3 id="targetName" style="grid-column: span 2; margin-top: 0; margin-bottom: 5px; color: var(--primary);">Target Device</h3>
+        
+        <!-- Media Controls -->
+        <div class="section-header">Media & System</div>
+        <button onclick="sendCommand('play_pause')">⏯️ Play/Pause</button>
+        <button onclick="sendCommand('open_youtube')">📺 YouTube</button>
+        <button onclick="sendCommand('vol_down')">🔉 Vol -</button>
+        <button onclick="sendCommand('vol_up')">🔊 Vol +</button>
+        <button onclick="sendCommand('home')">🏠 Home/Desktop</button>
+        <button onclick="sendCommand('lock_pc')">🔒 Lock/Sleep</button>
+
+        <!-- D-Pad Navigation -->
+        <div class="section-header">Navigation</div>
+        <div class="dpad">
+            <div class="empty-space"></div>
+            <button onclick="sendCommand('dpad_up')">▲</button>
+            <div class="empty-space"></div>
+            
+            <button onclick="sendCommand('dpad_left')">◀</button>
+            <button class="center" onclick="sendCommand('dpad_center')">OK</button>
+            <button onclick="sendCommand('dpad_right')">▶</button>
+            
+            <div class="empty-space"></div>
+            <button onclick="sendCommand('dpad_down')">▼</button>
+            <div class="empty-space"></div>
+        </div>
+        
+        <!-- Parameterized Data Tools -->
+        <div class="section-header">Advanced Tools</div>
+        <input type="text" id="customInput" placeholder="URL, text, or script.bat" style="grid-column: span 2;">
+        
+        <button onclick="sendCommand('open_url', document.getElementById('customInput').value)">🌐 Open URL</button>
+        <button onclick="sendCommand('type_text', document.getElementById('customInput').value)">⌨️ Type Text</button>
+        <button onclick="sendCommand('run_script', document.getElementById('customInput').value)" style="grid-column: span 2; border-color: #ffaa00; color: #ffaa00;">🚀 Run Script (PC Only)</button>
+    </div>
+
+    <!-- Application Logic -->
+    <script>
+        let client = null;
+        let currentTarget = null;
+        let devices = JSON.parse(localStorage.getItem('mesh_devices')) || {};
+
+        function init() {
+            if (!localStorage.getItem("mesh_secret")) {
+                document.getElementById('setupView').classList.remove('hidden');
+            } else {
+                document.getElementById('setupView').classList.add('hidden');
+                document.getElementById('appHeader').classList.remove('hidden');
+                showNetwork();
+                connectMQTT();
+            }
+        }
+
+        function saveAndConnect() {
+            localStorage.setItem("mesh_user", document.getElementById('userIn').value);
+            localStorage.setItem("mesh_pass", document.getElementById('passIn').value);
+            localStorage.setItem("mesh_secret", document.getElementById('secretIn').value);
+            init();
+        }
+
+        function logout() { 
+            localStorage.clear(); 
+            location.reload(); 
+        }
+
+        // Draws the cards for devices on the network
+        function renderDevices() {
+            const container = document.getElementById('deviceContainer');
+            container.innerHTML = '';
+            Object.values(devices).forEach(d => {
+                const isOnline = d.status === 'online';
+                const div = document.createElement('div');
+                div.className = 'device-card';
+                
+                // Only allow clicking if the device is currently online
+                if(isOnline) {
+                    div.onclick = () => openRemote(d.id, d.name);
+                } else {
+                    div.style.opacity = '0.6';
+                }
+                
+                div.innerHTML = `
+                    <div><strong style="color: ${isOnline ? '#fff' : '#aaa'}">${d.name}</strong><br><span style="font-size: 10px; color: #888;">${d.id}</span></div>
+                    <div><span class="status-dot ${isOnline ? 'online' : 'offline'}"></span></div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function connectMQTT() {
+            client = mqtt.connect(CONFIG.BROKER_URL, {
+                username: localStorage.getItem("mesh_user"),
+                password: localStorage.getItem("mesh_pass"),
+                clientId: 'pwa_admin_' + Math.random().toString(16).substr(2, 8)
+            });
+
+            client.on('connect', () => {
+                document.getElementById('statusText').innerText = "🟢 Connected. Listening for devices...";
+                // Listen to all discovery broadcasts
+                client.subscribe(CONFIG.DISCOVERY_TOPIC);
+                renderDevices();
+            });
+
+            client.on('message', (topic, message) => {
+                if (topic.startsWith(CONFIG.BASE_TOPIC + "/discovery/")) {
+                    try {
+                        const data = JSON.parse(message.toString());
+                        devices[data.id] = data; // Update or add the device
+                        localStorage.setItem('mesh_devices', JSON.stringify(devices));
+                        renderDevices();
+                    } catch (e) { console.error("Discovery parsing error"); }
+                }
+            });
+
+            client.on('error', (err) => {
+                document.getElementById('statusText').innerText = "🔴 Connection Error.";
+            });
+        }
+
+        function showNetwork() {
+            document.getElementById('networkView').classList.remove('hidden');
+            document.getElementById('remoteView').classList.add('hidden');
+            document.getElementById('backBtn').classList.add('hidden');
+            document.getElementById('titleText').innerText = "Mesh.Net";
+            renderDevices();
+        }
+
+        function openRemote(id, name) {
+            currentTarget = id;
+            document.getElementById('networkView').classList.add('hidden');
+            document.getElementById('remoteView').classList.remove('hidden');
+            document.getElementById('backBtn').classList.remove('hidden');
+            document.getElementById('titleText').innerText = "Controlling";
+            document.getElementById('targetName').innerText = name;
+        }
+
+        // The core secure execution function
+        function sendCommand(action, dataParam = null) {
+            if (!client || !currentTarget) return;
+            
+            const secret = localStorage.getItem("mesh_secret");
+            const ts = Math.floor(Date.now() / 1000);
+            
+            // THE FIX: The PWA now identifies as the universal admin role
+            const senderId = 'mesh_admin'; 
+            
+            const msgToSign = `${action}:${senderId}:${currentTarget}:${ts}`;
+            const signature = CryptoJS.HmacSHA256(msgToSign, secret).toString(CryptoJS.enc.Hex);
+
+            const payload = JSON.stringify({ 
+                action: action, 
+                data: dataParam,
+                from: senderId, // This passes 'mesh_admin' to the Python nodes
+                to: currentTarget, 
+                timestamp: ts, 
+                signature: signature 
+            });
+
+            client.publish(`${CONFIG.BASE_TOPIC}/${currentTarget}/in`, payload, { qos: 1 });
+        }
+
+        // Lifecycle Rule: Disconnect when the phone screen turns off or app is swiped away
+        // Lifecycle Rule: Disconnect when the phone screen turns off to save battery
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "hidden" && client) {
+                client.end(); 
+                client = null; // Clean up the old connection
+            } else if (document.visibilityState === "visible") {
+                // Check if logged in, then ONLY reconnect the background network. 
+                // Do NOT call init() again, so the user stays on their current screen.
+                if (localStorage.getItem("mesh_secret")) {
+                    connectMQTT(); 
+                }
+            }
+        });
+
+        // Start the app sequence
+        init();
+    </script>
+</body>
+</html>
