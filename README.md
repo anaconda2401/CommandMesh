@@ -1,256 +1,63 @@
 # CommandMesh
 
-<div align="center">
+CommandMesh is a secure, private device network that allows you to execute remote commands across multiple platforms (Desktop & Android) over MQTT. 
 
-**A secure, cloud-relayed, cross-platform remote command network.**
+Built with security first, the project ensures that the MQTT broker acts only as a dumb relay. All commands are cryptographically signed by a client-side Progressive Web App (PWA) and verified locally on the target device using Ed25519 cryptography.
 
-Control your PC and Android devices from your phone — through the internet, on any network, with zero port forwarding.
+## Features
 
-[![GitHub Repo](https://img.shields.io/badge/GitHub-CommandMesh-00ffaa?style=flat-square&logo=github&logoColor=white)](https://github.com/anaconda2401/CommandMesh)
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square&logo=python)](https://www.python.org/)
-[![MQTT](https://img.shields.io/badge/Broker-HiveMQ-purple?style=flat-square)](https://www.hivemq.com/)
-[![PWA](https://img.shields.io/badge/Frontend-PWA-orange?style=flat-square)](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps)
-
-</div>
-
----
-
-## What is CommandMesh?
-
-CommandMesh is a **private device control mesh network**. Run lightweight Python nodes on your PC or Android (Termux), then control them from a **Progressive Web App (PWA)** on your phone — from anywhere in the world.
-
-All communication is relayed through a **HiveMQ cloud MQTT broker** over TLS, meaning:
-- [Yes] No port forwarding required
-- [Yes] Works across different Wi-Fi networks and mobile data
-- [Yes] All commands are cryptographically signed with HMAC-SHA256
-- [Yes] Replay attacks are blocked by a 10-second timestamp window
-
----
+- **Cross-Platform Nodes:** Run nodes on Windows, macOS, Linux, or Android (via Termux).
+- **Progressive Web App (PWA):** Control your entire network from a sleek, mobile-friendly web interface. Includes a D-Pad, media controls, and custom text/script inputs.
+- **Cryptographic Security:** Every command is signed using your Master Passphrase. Payload tampering, spoofing, and replay attacks are actively prevented.
+- **Zero-Config Setup:** Nodes auto-detect their environment, install dependencies, and provide a local web dashboard (port 8080) for easy initial configuration.
+- **Custom Scripts:** Desktop nodes can securely execute whitelisted local scripts (`.bat`, `.sh`, `.ps1`, `.py`).
+- **Android Integration:** The Termux node uses ADB or Root (`su`) to control Android TVs or phones (simulate keypresses, open URLs, etc.).
 
 ## Architecture
 
-```
-┌──────────────┐        TLS/MQTT         ┌───────────────────┐
-│  PWA (Phone) │ ──── HiveMQ Cloud ────► │  Python Node (PC) │
-│              │ ◄───── Discovery ─────── │  Python Node (TV) │
-└──────────────┘                          └───────────────────┘
-```
+1. **MQTT Broker:** The central relay for all messages (e.g., a free HiveMQ Cloud cluster).
+2. **Nodes:** Python clients running on your target devices.
+   - **Desktop Node:** Uses `pyautogui` and `subprocess` to control PCs (type text, media controls, lock screen, execute whitelisted scripts).
+   - **Termux Node:** Uses `adb` or root (`su`) to control Android devices (launch intents, input keyevents like D-Pad/Volume).
+3. **PWA Controller:** A standalone HTML/JS web app (`pwa/index.html`) that generates cryptographic signatures locally using TweetNaCl and sends commands to the MQTT broker.
 
-1. **Each device** runs `main.py`, which detects its environment (Desktop or Termux/Android) and boots the correct node.
-2. **Each node** connects to HiveMQ and publishes its presence to the discovery topic.
-3. **The PWA** (hosted locally or on GitHub Pages) subscribes to the discovery topic, auto-discovers all live nodes, and lets you select a device to control.
-4. Every command is **HMAC-signed** by the PWA and **verified** by the receiving node before execution.
+## Setup Instructions
 
----
+### 1. The PWA Controller
+The PWA requires no backend and can be hosted anywhere (GitHub Pages, Vercel, Netlify) or just opened locally.
+1. Open `pwa/index.html` in your browser.
+2. Enter your MQTT Broker details (e.g., HiveMQ URL, username, and password).
+3. Enter a strong **Master Passphrase**. 
+4. Click **Generate Node Public Key** and copy the generated hex key. You will need this for your nodes.
 
-## Project Structure
-
-```
-CommandMesh/
-├── main.py                       # Universal entry point — auto-detects device & boots node
-│
-├── lib/
-│   └── security.py               # HMAC-SHA256 signature verification & replay attack prevention
-│
-├── config/
-│   ├── __init__.py
-│   └── allowed_scripts.py        # Allowed custom scripts configuration
-│
-├── nodes/
-│   ├── desktop/
-│   │   ├── node.py               # Desktop node (Windows/Mac/Linux)
-│   │   ├── requirements.txt
-│   │   └── scripts/              # (gitignored) Place your .bat/.sh scripts here
-│   │
-│   └── termux/
-│       ├── node.py               # Android node (Termux / Smart TV)
-│       └── requirements.txt
-│
-├── pwa/
-│   ├── index.html                # Full PWA controller UI (single file, no build step)
-│   └── manifest.json             # PWA install manifest
-│
-├── .env                          # (gitignored) Your secrets — NEVER commit this
-└── .gitignore
-```
-
----
-
-## Setup Guide
-
-### Prerequisites
-
-- Python 3.8+ installed on each device you want to control
-- A free [HiveMQ Cloud](https://www.hivemq.com/cloud/) account (the free tier is sufficient)
-
----
-
-### Step 1: Clone the Repository
-
+### 2. Node Installation
+Clone the repository on the target device:
 ```bash
 git clone https://github.com/anaconda2401/CommandMesh.git
 cd CommandMesh
-```
-
-### Step 2: Configure Secrets
-
-Create a `.env` file in the root directory and fill in your HiveMQ credentials:
-
-```env
-MQTT_BROKER=YOUR_CLUSTER_ID.s1.eu.hivemq.cloud
-MQTT_PORT=8883
-MQTT_USERNAME=your_hivemq_username
-MQTT_PASSWORD=your_hivemq_password
-MESH_SECRET=choose_a_strong_secret_key
-```
-
-> **Important:** `MESH_SECRET` is a shared key between the PWA and all nodes. It must be the same everywhere. Choose something long and random.
-
-### Step 3: Configure Each Device Node
-
-Open the node file for your device and set its identity:
-
-**`nodes/desktop/node.py`** (for your PC):
-```python
-DEVICE_ID   = "my_gaming_pc"    # Unique ID for this device (no spaces)
-DEVICE_NAME = "Gaming PC"       # Display name shown in the PWA
-DEVICE_TYPE = "pc"
-```
-
-**`nodes/termux/node.py`** (for your Android / TV):
-```python
-DEVICE_ID   = "living_room_tv"
-DEVICE_NAME = "Android Smart TV"
-DEVICE_TYPE = "tv"
-```
-
-### Step 4: Run the Node
-
-On each device, simply run:
-
-```bash
 python main.py
 ```
+On first run, the node will:
+1. Detect your OS environment (Termux vs Desktop).
+2. Install required Python dependencies automatically.
+3. Launch a local setup server at `http://127.0.0.1:8080`.
+4. Open the local dashboard in your browser and paste your MQTT credentials and the **Public Key** you generated in the PWA.
+5. The node will save to `.env` and connect to the mesh!
 
-`main.py` will automatically:
-1. Detect if it's running on Desktop or Termux (Android)
-2. Install the correct dependencies from `nodes/{device}/requirements.txt`
-3. Validate your `.env` configuration
-4. Run a live pre-flight TLS connection test to HiveMQ
-5. Boot the correct node script
+### 3. Desktop Node Scripts (Optional)
+Desktop nodes can execute custom scripts remotely. For security, only whitelisted scripts can be executed.
+1. Place your scripts inside `nodes/desktop/scripts/`.
+2. Add the exact script filename to the `ALLOWED_SCRIPTS` list inside `config/allowed_scripts.py`.
 
-### Step 5: Configure and Open the PWA
+### 4. Android Node Setup
+On Android, CommandMesh runs inside Termux.
+- **Rooted Devices:** Execution is instant. Ensure Magisk/SuperSU is set to 'Always Allow' for Termux.
+- **Non-Rooted Devices:** Enable Wireless Debugging in Developer Options and ensure ADB is connected locally (e.g., `adb connect 127.0.0.1:5555`).
 
-Open `pwa/index.html` in your phone's browser (or any browser). On first launch, you will see a settings page where you can enter your configuration details:
+## Security Details
 
-- **Broker URL:** `wss://YOUR_CLUSTER_ID.s1.eu.hivemq.cloud:8884/mqtt` (Browsers use WebSockets port 8884, NOT 8883)
-- **Username** and **Password**
-- **Mesh Secret**
-
-These details are securely saved in your browser's `localStorage` — you won't need to enter them again.
-
----
-
-## Security Model
-
-CommandMesh uses a **dual-layer security system**:
-
-| Layer | Mechanism | Protection Against |
-|---|---|---|
-| **Transport** | TLS 1.2+ (HiveMQ enforced) | Eavesdropping, MITM attacks |
-| **Payload** | HMAC-SHA256 signature | Command tampering, forged messages |
-| **Timestamp** | 10-second expiry window | Replay / zombie attacks |
-
-Every command payload includes:
-```json
-{
-  "action": "lock_pc",
-  "from": "pwa_admin",
-  "to": "desktop_main",
-  "timestamp": 1746123456,
-  "signature": "a3f9c2..."
-}
-```
-
-The node verifies the signature **before** executing any action. A message with an invalid signature or one older than 10 seconds is silently dropped.
-
----
-
-## Supported Commands
-
-### Media & System
-| Command | PC (Desktop) | Android (Termux) |
-|---|---|---|
-| `play_pause` | `pyautogui` media key | `keyevent 85` |
-| `vol_up` | `pyautogui` volume up | `keyevent 24` |
-| `vol_down` | `pyautogui` volume down | `keyevent 25` |
-| `home` | Win+D (show desktop) | `keyevent 3` (Home) |
-| `lock_pc` | `LockWorkStation` | `keyevent 26` (Power) |
-| `open_youtube` | Opens in browser | Opens via intent |
-
-### Navigation (D-Pad)
-`dpad_up`, `dpad_down`, `dpad_left`, `dpad_right`, `dpad_center`
-
-### Advanced Tools (Parameterized)
-| Command | Description | PC | Android |
-|---|---|---|---|
-| `open_url` | Opens a URL | `webbrowser.open()` | Android intent |
-| `type_text` | Types text at cursor | `pyautogui.write()` | `input text` |
-| `run_script` | Executes a script file | [Yes] (from `scripts/`) | [Blocked] |
-
-### Custom Scripts (PC Only)
-
-Place any `.bat` or `.sh` script inside `nodes/desktop/scripts/`. Make sure to add the script name to the allowed scripts list in `config/allowed_scripts.py`. From the PWA's **Advanced Tools** section, type the filename (e.g., `launch_obs.bat`) and tap **Run Script**.
-
-> Scripts in `scripts/` are gitignored by default to keep your automations private.
-
----
-
-## Extending CommandMesh
-
-Adding a new command is a two-step process:
-
-1. **Add the action handler** in the relevant `nodes/<device>/node.py` inside `execute_action()`:
-   ```python
-   elif action == "my_new_command":
-       # your code here
-   ```
-
-2. **Add a button** in `pwa/index.html`:
-   ```html
-   <button onclick="sendCommand('my_new_command')">My New Command</button>
-   ```
-
----
-
-## Troubleshooting
-
-**`[Error] Missing critical .env variables`**
-→ Ensure `.env` exists in the root directory and all 5 keys are filled in.
-
-**`[Error] Authentication Failed`**
-→ Double-check your HiveMQ username and password in `.env`. Ensure the cluster is active.
-
-**`[Error] Script not found in scripts/`**
-→ Place the script file inside `nodes/desktop/scripts/` and use only the filename, not a path.
-
-**`[Error] Unauthorized script`**
-→ Ensure your script filename is added to `ALLOWED_SCRIPTS` in `config/allowed_scripts.py`.
-
-**PWA shows "[Error] Connection Error"**
-→ Verify your Broker URL in the PWA uses the **WebSocket URL** (`wss://...`) on **port 8884**, not 8883.
-
-**Commands are rejected on the node**
-→ Ensure `MESH_SECRET` in `.env` matches exactly what you entered in the PWA login screen.
-
----
-
-## License
-
-This project is open-source. Feel free to fork, modify, and build on it.
-
----
-
-<div align="center">
-Made with coffee | <a href="https://github.com/anaconda2401/CommandMesh">github.com/anaconda2401/CommandMesh</a>
-</div>
+CommandMesh is designed assuming the MQTT broker could be compromised:
+- **Ed25519 Signatures:** Uses PyNaCl to verify that commands came from the holder of the Master Passphrase. The Master Passphrase never leaves the PWA.
+- **Anti-Replay Windows:** Timestamps are embedded in the signed message. Messages older than 10 seconds (or from the future) are rejected.
+- **Signature Caching:** Nodes remember recently seen signatures to block strict replay attacks within the 10-second window.
+- **Payload Integrity:** The command action, target ID, and payload data are all included in the signature hash, preventing man-in-the-middle parameter tampering.
