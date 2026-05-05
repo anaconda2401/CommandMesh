@@ -65,17 +65,21 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 
-# F-02 Fix: Generate a secure, randomized CSRF token for this session
+# Generate a secure, randomized CSRF token for this session
 CSRF_TOKEN = secrets.token_hex(16)
 
 class ConfigDashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         load_dotenv(ENV_FILE, override=True)
         
-        # F-06 Fix: Neutralize Stored XSS by escaping environment variables
+        # Neutralize Stored XSS by escaping environment variables
         broker = html.escape(os.getenv("MQTT_BROKER", ""))
         username = html.escape(os.getenv("MQTT_USERNAME", ""))
         public_keys = html.escape(os.getenv("MESH_PUBLIC_KEYS", ""))
+        
+        # NEW: Load current Identity configurations
+        node_id = html.escape(os.getenv("NODE_ID", ""))
+        node_name = html.escape(os.getenv("NODE_NAME", ""))
 
         html_content = f"""
         <!DOCTYPE html>
@@ -98,8 +102,22 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
             <div class="container">
                 <h2>Node Setup</h2>
                 <form method="POST">
-                    <!-- F-02 Fix: Inject CSRF Token -->
                     <input type="hidden" name="csrf_token" value="{CSRF_TOKEN}">
+                    
+                    <!-- NEW: Identity Section -->
+                    <div style="border-bottom: 1px solid #333; margin-bottom: 20px; padding-bottom: 10px;">
+                        <label style="color: var(--primary);">Device Identity</label>
+                    </div>
+
+                    <label>Node ID (No Spaces, e.g. laptop_1)</label>
+                    <input type="text" name="NODE_ID" value="{node_id}" required>
+
+                    <label>Display Name (e.g. My Work Laptop)</label>
+                    <input type="text" name="NODE_NAME" value="{node_name}" required>
+
+                    <div style="border-bottom: 1px solid #333; margin-bottom: 20px; padding-bottom: 10px;">
+                        <label style="color: var(--primary);">Network Security</label>
+                    </div>
                     
                     <label>MQTT Broker URL</label>
                     <input type="text" name="MQTT_BROKER" value="{broker}" placeholder="e.g., wss://cluster.hivemq.cloud:8884/mqtt" required>
@@ -129,7 +147,6 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         post_data = self.rfile.read(content_length).decode('utf-8')
         parsed_data = parse_qs(post_data)
 
-        # F-02 Fix: Strictly validate the CSRF token
         submitted_token = parsed_data.get("csrf_token", [""])[0]
         if not secrets.compare_digest(submitted_token, CSRF_TOKEN):
             self.send_response(403)
@@ -141,10 +158,15 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         if not os.path.exists(ENV_FILE):
             open(ENV_FILE, 'a').close()
 
-        valid_keys = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS"]
+        # NEW: Added NODE_ID and NODE_NAME to valid keys
+        valid_keys = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS", "NODE_ID", "NODE_NAME"]
         for key in valid_keys:
             if key in parsed_data and parsed_data[key][0].strip():
-                set_key(ENV_FILE, key, parsed_data[key][0].strip())
+                # Format the NODE_ID to ensure no spaces
+                value = parsed_data[key][0].strip()
+                if key == "NODE_ID":
+                    value = value.replace(" ", "_").lower()
+                set_key(ENV_FILE, key, value)
 
         self.send_response(200)
         self.send_header("Content-type", "text/html")
@@ -157,7 +179,6 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         """
         self.wfile.write(success_html.encode('utf-8'))
         
-        # F-05 Fix: Terminate the dashboard thread cleanly after a successful setup
         threading.Thread(target=self.server.shutdown, daemon=True).start()
 
     def log_message(self, format, *args):
@@ -173,7 +194,8 @@ def run_dashboard():
 # ==========================================
 def get_missing_keys():
     load_dotenv(ENV_FILE, override=True)
-    required = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS"]
+    # NEW: Node will pause and prompt setup if it is missing a Name or ID
+    required = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS", "NODE_ID", "NODE_NAME"]
     return [k for k in required if not os.getenv(k)]
 
 def test_connection(creds):

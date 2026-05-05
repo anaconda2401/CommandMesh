@@ -3,6 +3,7 @@ import sys
 import json
 import subprocess
 import webbrowser
+import platform  # Added to detect Windows, Mac, or Linux
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 
@@ -20,8 +21,8 @@ except ImportError:
 load_dotenv(os.path.join(os.path.dirname(__file__), '../../.env'))
 
 # --- CONFIGURATION ---
-DEVICE_ID = "desktop_main"
-DEVICE_NAME = "My Laptop"
+DEVICE_ID = os.getenv("NODE_ID", "desktop_fallback")
+DEVICE_NAME = os.getenv("NODE_NAME", "Unnamed PC")
 DEVICE_TYPE = "pc"
 
 BROKER = os.getenv("MQTT_BROKER")
@@ -34,6 +35,9 @@ TOPIC_DISCOVERY = f"commandmesh/discovery/{DEVICE_ID}"
 
 SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "scripts")
 os.makedirs(SCRIPTS_DIR, exist_ok=True)
+
+# Detect OS exactly once at startup
+OS_NAME = platform.system()  # Returns "Windows", "Darwin" (Mac), or "Linux"
 
 def execute_action(payload_data):
     action = payload_data.get("action")
@@ -63,10 +67,26 @@ def execute_action(payload_data):
                 # SAFE EXECUTION: shell=False prevents command injection
                 if safe_name.endswith('.py'):
                     subprocess.Popen([sys.executable, script_path], shell=False)
+                
+                # Windows Scripts
                 elif safe_name.endswith('.bat') or safe_name.endswith('.cmd'):
-                    subprocess.Popen(["cmd.exe", "/c", script_path], shell=False)
+                    if OS_NAME == "Windows":
+                        subprocess.Popen(["cmd.exe", "/c", script_path], shell=False)
+                    else:
+                        print(f"[ERROR] Cannot run .bat files on {OS_NAME}")
+                
+                # PowerShell Scripts
                 elif safe_name.endswith('.ps1'):
-                    subprocess.Popen(["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", script_path], shell=False)
+                    ps_exe = "powershell.exe" if OS_NAME == "Windows" else "pwsh" # Supports PS Core on Mac/Linux
+                    subprocess.Popen([ps_exe, "-ExecutionPolicy", "Bypass", "-File", script_path], shell=False)
+                
+                # Mac/Linux Shell Scripts
+                elif safe_name.endswith('.sh'):
+                    if OS_NAME in ["Linux", "Darwin"]:
+                        subprocess.Popen(["bash", script_path], shell=False)
+                    else:
+                        print(f"[ERROR] Cannot natively run .sh files on {OS_NAME} without WSL/Git Bash")
+            
             except Exception as e:
                 print(f"[ERROR] Failed to run script: {e}")
         else:
@@ -74,12 +94,19 @@ def execute_action(payload_data):
 
     # --- STANDARD SYSTEM & MEDIA COMMANDS ---
     elif action == "open_youtube":
-        subprocess.run(["cmd.exe", "/c", "start", "https://youtube.com"], shell=False, check=False)
+        # webbrowser is natively cross-platform, no need for subprocess cmd.exe
+        webbrowser.open("https://youtube.com")
+        
     elif action == "lock_pc":
-        subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], shell=False, check=False)
+        if OS_NAME == "Windows":
+            subprocess.run(["rundll32.exe", "user32.dll,LockWorkStation"], shell=False, check=False)
+        elif OS_NAME == "Darwin": # macOS
+            subprocess.run(["pmset", "displaysleepnow"], shell=False, check=False)
+        elif OS_NAME == "Linux":
+            # xdg-screensaver is the most standard lock across Linux Desktop Environments (Gnome, KDE, XFCE)
+            subprocess.run(["xdg-screensaver", "lock"], shell=False, check=False)
         
     # --- PYAUTOGUI DEPENDENT ACTIONS ---
-    # We group all GUI actions together to handle the missing dependency cleanly
     elif action in ["type_text", "press_keys", "home", "play_pause", "vol_up", "vol_down", 
                     "dpad_up", "dpad_down", "dpad_left", "dpad_right", "dpad_center"]:
         
@@ -93,7 +120,14 @@ def execute_action(payload_data):
             keys = [k.strip() for k in params.split(',')]
             pyautogui.hotkey(*keys)
         elif action == "home":
-            pyautogui.hotkey('win', 'd')
+            # OS-Specific 'Show Desktop' hotkeys
+            if OS_NAME == "Windows":
+                pyautogui.hotkey('win', 'd')
+            elif OS_NAME == "Darwin":
+                pyautogui.hotkey('command', 'f3') # macOS Mission Control / Show Desktop
+            elif OS_NAME == "Linux":
+                pyautogui.hotkey('ctrl', 'super', 'd')
+                
         elif action == "play_pause":
             pyautogui.press('playpause')
         elif action == "vol_up":
@@ -113,7 +147,7 @@ def execute_action(payload_data):
 
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
-        print(f"[SUCCESS] Node '{DEVICE_ID}' connected.")
+        print(f"[SUCCESS] Node '{DEVICE_ID}' ({OS_NAME}) connected.")
         client.subscribe(TOPIC_INBOX)
         status_payload = json.dumps({"id": DEVICE_ID, "name": DEVICE_NAME, "type": DEVICE_TYPE, "status": "online"})
         client.publish(TOPIC_DISCOVERY, status_payload, retain=True)
@@ -141,7 +175,7 @@ client.will_set(TOPIC_DISCOVERY, lwt_payload, retain=True)
 client.on_connect = on_connect
 client.on_message = on_message
 
-print(f"[INFO] Booting Node: {DEVICE_ID}...")
+print(f"[INFO] Booting Node: {DEVICE_ID} on {OS_NAME}...")
 
 # Graceful Disconnect Handling
 try:
@@ -149,7 +183,6 @@ try:
     client.loop_forever()
 except KeyboardInterrupt:
     print(f"\n[INFO] Shutting down '{DEVICE_ID}'. Broadcasting offline status...")
-    # Manually publish offline payload and force flush the network buffer
     client.publish(TOPIC_DISCOVERY, lwt_payload, retain=True)
     client.loop_write() 
     client.disconnect()
