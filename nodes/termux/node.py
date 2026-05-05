@@ -3,7 +3,7 @@ import sys
 import json
 import subprocess
 import shutil
-import shlex
+import shlex  # RESTORED: Vital for safe shell execution on Android
 from urllib.parse import urlparse
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
@@ -14,9 +14,9 @@ from lib.security import verify_message
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '../../.env'))
 
-# --- TV / PHONE CONFIGURATION ---
-DEVICE_ID = os.getenv("NODE_ID", "android_fallback")
-DEVICE_NAME = os.getenv("NODE_NAME", "Unnamed Android")
+# --- CONFIGURATION ---
+DEVICE_ID = os.getenv("NODE_ID", "tv_node")
+DEVICE_NAME = os.getenv("NODE_NAME", "Android TV")
 DEVICE_TYPE = "tv"
 
 BROKER = os.getenv("MQTT_BROKER", "localhost")
@@ -36,99 +36,72 @@ ANDROID_KEYCODES = {
 }
 
 # ==========================================
-# AUTO-DETECT EXECUTION MODE
+# EXECUTION MODE DETECTION
 # ==========================================
+try:
+    IS_NATIVE_ROOT = os.geteuid() == 0
+except AttributeError:
+    IS_NATIVE_ROOT = False
+
 def detect_termux_mode():
-    """Checks for root access first, falls back to normal ADB."""
-    env_mode = os.getenv("TERMUX_MODE", "").lower()
-    if env_mode in ["root", "adb"]:
-        return env_mode
-    
-    if shutil.which("su"):
-        try:
-            test = subprocess.run(["su", "-c", "id"], capture_output=True, text=True, timeout=2)
-            if test.returncode == 0:
-                return "root"
-        except Exception:
-            pass
-            
-    if shutil.which("adb"):
-        return "adb"
-        
-    print("\n[FATAL] System cannot execute commands!")
-    print(" -> FIX 1: If rooted, ensure Magisk/SuperSU granted permission to Termux.")
-    print(" -> FIX 2: If normal, run 'pkg install android-tools' in Termux.")
+    if IS_NATIVE_ROOT: return "native_root"
+    if shutil.which("su"): return "su_wrapper"
+    if shutil.which("adb"): return "adb"
+    print("\n[FATAL] No execution method found!")
     sys.exit(1)
 
 TERMUX_MODE = detect_termux_mode()
 
 # ==========================================
-# PRE-FLIGHT CHECKS & DIAGNOSTICS
+# BOOT DIAGNOSTICS (ASCII ONLY)
 # ==========================================
-IS_ANDROID = "ANDROID_ROOT" in os.environ
-has_wakelock = False
+print("\n" + "="*40)
+print(f" NODE: {DEVICE_NAME}")
+print("="*40)
+
+if TERMUX_MODE == "native_root":
+    print(" MODE: [OK] NATIVE ROOT (0-Latency)")
+elif TERMUX_MODE == "su_wrapper":
+    print(" MODE: [*] SU WRAPPER")
+else:
+    print(f" MODE: [*] ADB -> {ADB_TARGET}")
 
 if shutil.which("termux-wake-lock"):
     os.system("termux-wake-lock")
-    has_wakelock = True
-
-# Mode-specific setup & hints
-mode_display = ""
-hints = []
-
-if TERMUX_MODE == "root":
-    mode_display = "[*] ROOTED MODE (su)"
-    hints.append("[HINT] Root mode is active. Execution will be instant with no network drops.")
-    hints.append("[HINT] Ensure Magisk/SuperSU is set to 'Always Allow' for Termux.")
+    print(" WAKE: [OK] Background lock active")
 else:
-    mode_display = f"[*] NORMAL MODE (ADB) -> Target: {ADB_TARGET}"
-    hints.append("[HINT] Normal mode uses ADB. Keep WiFi on and connected.")
-    hints.append(f"[HINT] Ensure 'Wireless Debugging' is enabled for {ADB_TARGET}.")
-    
-    # Attempt initial ADB connection
-    res = subprocess.run(["adb", "connect", ADB_TARGET], capture_output=True, text=True)
-    if "cannot connect" in res.stdout.lower() or "connection refused" in res.stdout.lower():
-        hints.append(f"[WARNING] Initial ADB connection to {ADB_TARGET} failed!")
+    print(" WAKE: [FAIL] termux-api missing")
 
-# PRINT BOOT DASHBOARD
-print("\n" + "="*50)
-print(f" COMMANDMESH ANDROID NODE : {DEVICE_NAME}")
-print("="*50)
-print(f" Node ID   : {DEVICE_ID}")
-print(f" Mode      : {mode_display}")
-print(f" Wakelock  : {'[OK] Active (Safe in background)' if has_wakelock else '[FAIL] Missing (Run: pkg install termux-api)'}")
-print(f" Android   : {'[YES]' if IS_ANDROID else '[NO] (Testing on PC?)'}")
-print(f" Broker    : Connecting to {BROKER}:{PORT}...")
-print("-" * 50)
-for hint in hints:
-    print(hint)
-print("="*50 + "\n")
+print(f" MQTT: Connecting to broker...")
+print("="*40 + "\n")
 
 # ==========================================
-# COMMAND EXECUTION ROUTER
+# COMMAND ROUTER (MEMORY OPTIMIZED & SAFE)
 # ==========================================
 def run_android_cmd(cmd_list):
     try:
-        if TERMUX_MODE == "root":
-            safe_cmd_str = shlex.join(cmd_list)
-            res = subprocess.run(["su", "-c", safe_cmd_str], capture_output=True, text=True)
-        else:
-            res = subprocess.run(["adb", "-s", ADB_TARGET, "shell"] + cmd_list, capture_output=True, text=True)
-            output_str = (res.stdout + res.stderr).lower()
-            if "device offline" in output_str or "not found" in output_str:
-                print(f"[WARNING] ADB offline. Auto-reconnecting to {ADB_TARGET}...")
-                subprocess.run(["adb", "connect", ADB_TARGET], capture_output=True)
-                res = subprocess.run(["adb", "-s", ADB_TARGET, "shell"] + cmd_list, capture_output=True, text=True)
-
-        if res.returncode != 0:
-            error_msg = res.stderr.strip() or res.stdout.strip()
-            print(f"[ERROR] Cmd failed: {error_msg}")
-            return False, error_msg
+        if TERMUX_MODE == "native_root":
+            res = subprocess.run(cmd_list, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            return res.returncode == 0, "Executed"
             
-        return True, "Success"
-    except Exception as e:
-        print(f"[ERROR] Exception: {e}")
-        return False, str(e)
+        elif TERMUX_MODE == "su_wrapper":
+            # RESTORED: shlex.join() prevents URLs with '&' from breaking the root shell
+            safe_cmd_str = shlex.join(cmd_list)
+            res = subprocess.run(["su", "-c", safe_cmd_str], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            return res.returncode == 0, "Executed"
+            
+        else:
+            # ADB Mode
+            res = subprocess.run(["adb", "-s", ADB_TARGET, "shell"] + cmd_list, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            if res.returncode != 0:
+                subprocess.run(["adb", "connect", ADB_TARGET], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+                res = subprocess.run(["adb", "-s", ADB_TARGET, "shell"] + cmd_list, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            return res.returncode == 0, "Executed"
+
+    except subprocess.TimeoutExpired:
+        return False, "Timeout"
+    except Exception:
+        return False, "Error"
 
 # ==========================================
 # ACTION HANDLER
@@ -136,8 +109,6 @@ def run_android_cmd(cmd_list):
 def execute_action(payload_data):
     action = payload_data.get("action")
     params = payload_data.get("data")
-    
-    print(f"[CMD] {action} {('-> ' + str(params)) if params else ''}")
     
     if action == "open_url" and params:
         parsed = urlparse(params)
@@ -155,17 +126,16 @@ def execute_action(payload_data):
         return run_android_cmd(["input", "keyevent", ANDROID_KEYCODES[action]])
 
     elif action == "run_script":
-        print("[BLOCK] Scripts are disabled on Android.")
-        return False, "Security block: Scripts not permitted"
+        return False, "Blocked"
         
-    return False, f"Unknown action: {action}"
+    return False, "Unknown"
 
 # ==========================================
 # MQTT SETUP
 # ==========================================
-def on_connect(client, userdata, flags, reason_code, properties):
+def on_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        print(f"[MQTT] [OK] Connected to mesh successfully.")
+        print(f"[MQTT] [OK] Connected!")
         client.subscribe(TOPIC_INBOX)
         
         status_payload = json.dumps({"id": DEVICE_ID, "name": DEVICE_NAME, "type": DEVICE_TYPE, "status": "online"})
@@ -175,23 +145,31 @@ def on_message(client, userdata, msg):
     try:
         data = json.loads(msg.payload.decode())
         if data.get("to") != DEVICE_ID: return
-        
         if not verify_message(data): return 
             
         success, detail = execute_action(data)
         
-        ack_payload = {
-            "id": DEVICE_ID,
-            "action": data.get("action"),
-            "status": "success" if success else "error",
-            "message": detail
-        }
-        client.publish(TOPIC_OUTBOX, json.dumps(ack_payload))
-        
+        msg_id = data.get("msg_id")
+        if msg_id:
+            ack_payload = {
+                "id": DEVICE_ID,
+                "msg_id": msg_id,
+                "action": data.get("action"),
+                "status": "success" if success else "error",
+                "message": detail
+            }
+            client.publish(TOPIC_OUTBOX, json.dumps(ack_payload))
+            # Minimal log for ACK confirmation
+            print(f"[ACK] {msg_id}")
+            
+    except json.JSONDecodeError:
+        pass # Ignore bad JSON quietly
     except Exception as e:
-        print(f"[ERROR] Processing message: {e}")
+        # Minimal Error Log (so you aren't debugging in the dark)
+        print(f"[ERR] {e}")
 
-client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv5)
+# Downgraded to MQTTv311 for lower memory footprint
+client = mqtt.Client(protocol=mqtt.MQTTv311)
 client.tls_set()
 client.username_pw_set(USER, PASS)
 
@@ -210,7 +188,7 @@ except KeyboardInterrupt:
     client.loop_write() 
     client.disconnect()
     
-    if has_wakelock:
+    if shutil.which("termux-wake-lock"):
         os.system("termux-wake-unlock")
         
-    print("[SUCCESS] Disconnected cleanly.")
+    print("[OK] Disconnected.")

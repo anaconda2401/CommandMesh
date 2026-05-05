@@ -4,10 +4,12 @@ import subprocess
 import time
 import argparse
 import threading
+import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 
 ENV_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".env"))
+DEPS_FLAG = os.path.abspath(os.path.join(os.path.dirname(__file__), ".deps_installed"))
 
 def detect_device():
     """Auto-detects the operating system."""
@@ -20,18 +22,24 @@ def detect_device():
         return "desktop"
 
 def install_dependencies(device_type):
-    """Silently installs the required packages for the detected device."""
+    """Silently installs required packages exactly once."""
+    if os.path.exists(DEPS_FLAG):
+        return
+
     req_file = os.path.join("nodes", device_type, "requirements.txt")
     if not os.path.exists(req_file):
         print(f"[WARNING] Missing {req_file}. Skipping auto-install.")
         return
 
-    print(f"[INFO] Verifying dependencies from {req_file}...")
+    print(f"[INFO] First boot detected. Installing dependencies from {req_file}...")
     try:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-r", req_file, "--quiet"],
             check=True
         )
+        # Mark as installed so it skips this slow step on future boots
+        open(DEPS_FLAG, 'w').close()
+        print("[SUCCESS] Dependencies installed.")
     except subprocess.CalledProcessError:
         print(f"[ERROR] Failed to auto-install dependencies. Run manually:\n pip install -r {req_file}")
         sys.exit(1)
@@ -54,6 +62,9 @@ try:
     from dotenv import load_dotenv, set_key
 except ImportError as e:
     print(f"[ERROR] Critical Error: Modules failed to load. ({e})")
+    print("[INFO] Attempting to fix... deleting .deps_installed flag.")
+    if os.path.exists(DEPS_FLAG):
+        os.remove(DEPS_FLAG)
     sys.exit(1)
 
 # ==========================================
@@ -61,23 +72,29 @@ except ImportError as e:
 # ==========================================
 import html
 import secrets
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs
 
-# Generate a secure, randomized CSRF token for this session
 CSRF_TOKEN = secrets.token_hex(16)
+
+# Get the local IP address so the user knows where to connect
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+LOCAL_IP = get_local_ip()
 
 class ConfigDashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         load_dotenv(ENV_FILE, override=True)
         
-        # Neutralize Stored XSS by escaping environment variables
         broker = html.escape(os.getenv("MQTT_BROKER", ""))
         username = html.escape(os.getenv("MQTT_USERNAME", ""))
         public_keys = html.escape(os.getenv("MESH_PUBLIC_KEYS", ""))
-        
-        # NEW: Load current Identity configurations
         node_id = html.escape(os.getenv("NODE_ID", ""))
         node_name = html.escape(os.getenv("NODE_NAME", ""))
 
@@ -104,7 +121,6 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
                 <form method="POST">
                     <input type="hidden" name="csrf_token" value="{CSRF_TOKEN}">
                     
-                    <!-- NEW: Identity Section -->
                     <div style="border-bottom: 1px solid #333; margin-bottom: 20px; padding-bottom: 10px;">
                         <label style="color: var(--primary);">Device Identity</label>
                     </div>
@@ -158,11 +174,9 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         if not os.path.exists(ENV_FILE):
             open(ENV_FILE, 'a').close()
 
-        # NEW: Added NODE_ID and NODE_NAME to valid keys
         valid_keys = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS", "NODE_ID", "NODE_NAME"]
         for key in valid_keys:
             if key in parsed_data and parsed_data[key][0].strip():
-                # Format the NODE_ID to ensure no spaces
                 value = parsed_data[key][0].strip()
                 if key == "NODE_ID":
                     value = value.replace(" ", "_").lower()
@@ -173,7 +187,7 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         success_html = """
         <div style="font-family: system-ui, sans-serif; background: #0f0f0f; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #00ffaa;">✅ Saved & Secured!</h2>
+            <h2 style="color: #00ffaa;">[OK] Saved & Secured!</h2>
             <p style="color: #888;">Configuration applied. The local server is shutting down.</p>
         </div>
         """
@@ -185,7 +199,8 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         pass
 
 def run_dashboard():
-    host, port = '127.0.0.1', 8080
+    # Bind to 0.0.0.0 so headless devices (like TVs) can be configured from a phone
+    host, port = '0.0.0.0', 8080
     server = HTTPServer((host, port), ConfigDashboardHandler)
     server.serve_forever()
     
@@ -194,7 +209,6 @@ def run_dashboard():
 # ==========================================
 def get_missing_keys():
     load_dotenv(ENV_FILE, override=True)
-    # NEW: Node will pause and prompt setup if it is missing a Name or ID
     required = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS", "NODE_ID", "NODE_NAME"]
     return [k for k in required if not os.getenv(k)]
 
@@ -202,23 +216,36 @@ def test_connection(creds):
     print("[SYSTEM] Testing secure connection to cloud relay...")
     connected, error_msg = False, None
 
-    def on_connect(client, userdata, flags, reason_code, properties=None):
+    def on_connect(client, userdata, flags, rc, *args):
         nonlocal connected, error_msg
-        if reason_code == 0:
+        if rc == 0:
             connected = True
             print("[SUCCESS] Cloud relay authentication successful.")
         else:
-            error_msg = f"Connection refused (Code: {reason_code})"
+            error_msg = f"Connection refused (Code: {rc})"
         client.disconnect()
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv5)
+    client = mqtt.Client(protocol=mqtt.MQTTv311)
     client.tls_set()
     client.username_pw_set(creds["user"], creds["pass"])
     client.on_connect = on_connect
 
     try:
+        # Prevent infinite hang by using a short loop instead of loop_forever()
         client.connect(creds["broker"], 8883, 10)
-        client.loop_forever()
+        client.loop_start()
+        
+        # Wait up to 5 seconds for connection resolution
+        timeout = 5
+        start_time = time.time()
+        while not connected and error_msg is None and (time.time() - start_time) < timeout:
+            time.sleep(0.1)
+            
+        client.loop_stop()
+        
+        if not connected and error_msg is None:
+             error_msg = "Connection timed out."
+             
     except Exception as e:
         print(f"[ERROR] Network Error: Could not reach HiveMQ server. {e}")
         sys.exit(1)
@@ -235,7 +262,7 @@ def launch_node(node_type):
         
     print(f"[INFO] Handing over to {node_type} module...\n" + "-"*40)
     try:
-        subprocess.run([sys.executable, node_script])
+        subprocess.run([sys.executable, "-O", node_script])
     except KeyboardInterrupt:
         print("\n[INFO] Mesh node shutdown gracefully.")
         sys.exit(0)
@@ -250,23 +277,28 @@ if __name__ == "__main__":
 
     missing_keys = get_missing_keys()
 
-    # If keys are missing OR the user forced the dashboard with '-d'
     if missing_keys or args.dashboard:
         if not os.path.exists(ENV_FILE):
             open(ENV_FILE, 'w').close()
             print("[INFO] Created new empty .env file.")
             
         print("\n[SYSTEM] Launching Setup Dashboard...")
-        print("[INFO] GO TO: http://127.0.0.1:8080 in your browser to configure.")
+        print(f"[INFO] GO TO: http://{LOCAL_IP}:8080 (or http://127.0.0.1:8080) in your browser to configure.")
         
         threading.Thread(target=run_dashboard, daemon=True).start()
         
-        # Pause the script until the user saves the form and all keys exist
+        # 5 Minute timeout so the script doesn't hang forever in the background
+        timeout_seconds = 300
+        start_wait = time.time()
+        
         while get_missing_keys():
+            if time.time() - start_wait > timeout_seconds:
+                print("\n[ERROR] Setup timeout exceeded (5 minutes). Exiting.")
+                sys.exit(1)
             time.sleep(1)
+            
         print("\n[SUCCESS] Configuration received! Proceeding...")
 
-    # Load final confirmed credentials
     load_dotenv(ENV_FILE, override=True)
     creds = {
         "broker": os.getenv("MQTT_BROKER"),
