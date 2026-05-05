@@ -1,129 +1,641 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>CommandMesh</title>
-    
+
     <!-- Link App Manifest -->
     <link rel="manifest" href="manifest.json">
-    
+
     <!-- External Libraries: MQTT & Cryptography -->
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
-    
-    <!-- Load Public Config -->
-    <script src="config.js"></script>
-    
+    <script src="https://cdn.jsdelivr.net/npm/tweetnacl@1.0.3/nacl.min.js"></script>
+
     <style>
-        :root { --bg: #0f0f0f; --surface: #1e1e1e; --primary: #00ffaa; --text: #ffffff; }
-        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        
+        :root {
+            /* Colors */
+            --bg: #09090b;
+            --surface: #18181b;
+            --surface-hover: #27272a;
+            --border: #3f3f46;
+            --primary: #10b981;
+            --primary-hover: #059669;
+            --text: #fafafa;
+            --text-muted: #a1a1aa;
+            
+            /* Typography */
+            --font-sys: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            --text-xs: 0.75rem;
+            --text-sm: 0.875rem;
+            --text-base: 1rem;
+            --text-lg: 1.125rem;
+            
+            /* Spacing */
+            --space-2: 0.5rem;
+            --space-3: 0.75rem;
+            --space-4: 1rem;
+            --space-6: 1.5rem;
+            
+            /* Radii */
+            --radius-md: 8px;
+            --radius-lg: 12px;
+            
+            /* Transitions */
+            --transition: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        body {
+            font-family: var(--font-sys);
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: var(--space-4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            line-height: 1.5;
+        }
+
         /* Layout Grids */
-        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 400px; }
-        .section-header { grid-column: span 2; font-size: 12px; color: #888; text-transform: uppercase; margin-top: 15px; margin-bottom: -5px; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 5px; }
-        
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--space-3);
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .section-header {
+            grid-column: span 2;
+            font-size: var(--text-xs);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-top: var(--space-4);
+            margin-bottom: calc(var(--space-2) * -1);
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: var(--space-2);
+            font-weight: 600;
+        }
+
         /* UI Elements */
-        button { background: var(--surface); color: var(--text); border: 1px solid #333; padding: 15px; border-radius: 10px; font-size: 15px; cursor: pointer; transition: 0.2s; }
-        button:active { background: var(--primary); color: #000; border-color: var(--primary); transform: scale(0.96); }
-        input { width: 100%; padding: 12px; background: #222; color: #fff; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; margin-bottom: 10px; font-size: 14px;}
-        .hidden { display: none !important; }
+        button {
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: var(--space-3);
+            border-radius: var(--radius-md);
+            font-size: var(--text-sm);
+            font-weight: 500;
+            cursor: pointer;
+            transition: all var(--transition);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--space-2);
+        }
+
+        button:hover {
+            background: var(--surface-hover);
+            transform: translateY(-1px);
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
         
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button.primary {
+            background: var(--primary);
+            color: #000;
+            border-color: var(--primary);
+        }
+
+        button.primary:hover {
+            background: var(--primary-hover);
+        }
+
+        input {
+            width: 100%;
+            padding: var(--space-3);
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-sizing: border-box;
+            font-size: var(--text-sm);
+            font-family: var(--font-sys);
+            transition: border-color var(--transition);
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        textarea {
+            width: 100%;
+            padding: var(--space-3);
+            background: var(--bg);
+            color: var(--primary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            box-sizing: border-box;
+            font-family: var(--font-mono);
+            font-size: var(--text-sm);
+            resize: none;
+            outline: none;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .text-link {
+            color: var(--primary);
+            font-size: var(--text-xs);
+            text-decoration: none;
+            cursor: pointer;
+            transition: color var(--transition);
+        }
+
+        .text-link:hover {
+            color: var(--primary-hover);
+        }
+
+        /* Input Wrappers */
+        .input-wrapper {
+            position: relative;
+            width: 100%;
+            margin-bottom: var(--space-2);
+        }
+
+        .input-wrapper input {
+            margin-bottom: 0;
+            padding-right: 40px;
+        }
+
+        .toggle-btn {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            padding: 4px;
+            cursor: pointer;
+            width: auto;
+            color: var(--text-muted);
+        }
+        
+        .toggle-btn:hover {
+            background: transparent;
+            color: var(--text);
+            transform: translateY(-50%);
+        }
+
+        .toggle-btn:active {
+            transform: translateY(-50%) scale(0.95);
+        }
+
         /* Device List Styling */
-        .device-card { background: var(--surface); border: 1px solid #333; border-radius: 10px; padding: 15px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; width: 100%; max-width: 400px; box-sizing: border-box;}
-        .device-card:active { border-color: var(--primary); }
-        .status-dot { height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
-        .online { background-color: var(--primary); box-shadow: 0 0 8px var(--primary); }
-        .offline { background-color: #555; }
-        
+        .device-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: var(--space-4);
+            margin-bottom: var(--space-3);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            width: 100%;
+            max-width: 400px;
+            box-sizing: border-box;
+            transition: all var(--transition);
+        }
+
+        .device-card:hover {
+            border-color: var(--primary);
+            transform: translateY(-2px);
+        }
+
+        .device-card:active {
+            transform: translateY(0);
+        }
+
+        .status-dot {
+            height: 8px;
+            width: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: var(--space-2);
+        }
+
+        .online {
+            background-color: var(--primary);
+        }
+
+        .offline {
+            background-color: var(--text-muted);
+        }
+
         /* App Header */
-        .header { display: flex; justify-content: space-between; width: 100%; max-width: 400px; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 10px; align-items: center;}
-        .header-btn { border: none; background: none; padding: 0; font-size: 14px; cursor: pointer; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 400px;
+            margin-bottom: var(--space-6);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: var(--space-3);
+            align-items: center;
+        }
+
+        .header-btn {
+            border: none;
+            background: none;
+            padding: 0;
+            font-size: var(--text-sm);
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
         
+        .header-btn:hover {
+            color: var(--text);
+            transform: none;
+        }
+
         /* D-Pad Styling */
-        .dpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; max-width: 250px; margin: 10px auto; grid-column: span 2; }
-        .dpad button { padding: 15px 0; font-size: 18px; display: flex; justify-content: center; align-items: center; }
-        .dpad .center { background: var(--primary); color: var(--bg); font-weight: bold; }
-        .empty-space { background: none; border: none; }
+        .dpad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: var(--space-2);
+            width: 100%;
+            max-width: 250px;
+            margin: var(--space-3) auto;
+            grid-column: span 2;
+        }
+
+        .dpad button {
+            padding: var(--space-4) 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .dpad .center {
+            background: var(--border);
+            font-weight: 600;
+        }
+
+        .empty-space {
+            background: none;
+            border: none;
+        }
+        
+        /* Skeleton Animation */
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        
+        .skeleton {
+            background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: var(--radius-md);
+        }
+        
+        .skeleton-card {
+            height: 72px;
+            margin-bottom: var(--space-3);
+            width: 100%;
+            border-radius: var(--radius-lg);
+        }
+
+        svg {
+            width: 1.2em;
+            height: 1.2em;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
     </style>
 </head>
+
 <body>
+
+    <!-- SVG Definitions (hidden) -->
+    <svg width="0" height="0" class="hidden">
+        <defs>
+            <g id="icon-eye">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+            </g>
+            <g id="icon-eye-off">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                <line x1="1" y1="1" x2="23" y2="23"></line>
+            </g>
+            <g id="icon-copy">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </g>
+            <g id="icon-check">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </g>
+            <g id="icon-key">
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+            </g>
+            <g id="icon-play-pause">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </g>
+            <g id="icon-monitor">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+            </g>
+            <g id="icon-volume-down">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <line x1="15" y1="9" x2="15" y2="15"></line>
+            </g>
+            <g id="icon-volume-up">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </g>
+            <g id="icon-home">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </g>
+            <g id="icon-lock">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </g>
+            <g id="icon-globe">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+            </g>
+            <g id="icon-terminal">
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+            </g>
+            <g id="icon-code">
+                <polyline points="16 18 22 12 16 6"></polyline>
+                <polyline points="8 6 2 12 8 18"></polyline>
+            </g>
+            <g id="icon-arrow-left">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </g>
+            <g id="icon-up">
+                <polyline points="18 15 12 9 6 15"></polyline>
+            </g>
+            <g id="icon-down">
+                <polyline points="6 9 12 15 18 9"></polyline>
+            </g>
+            <g id="icon-left">
+                <polyline points="15 18 9 12 15 6"></polyline>
+            </g>
+            <g id="icon-right">
+                <polyline points="9 18 15 12 9 6"></polyline>
+            </g>
+            <g id="icon-loader">
+                <line x1="12" y1="2" x2="12" y2="6"></line>
+                <line x1="12" y1="18" x2="12" y2="22"></line>
+                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line>
+                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line>
+                <line x1="2" y1="12" x2="6" y2="12"></line>
+                <line x1="18" y1="12" x2="22" y2="12"></line>
+                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line>
+                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line>
+            </g>
+            <g id="icon-loader-spin">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+            </g>
+        </defs>
+    </svg>
 
     <!-- 1. Secure Login UI -->
     <div id="setupView" class="grid">
-        <h2 style="grid-column: span 2; color: var(--primary); text-align: center; font-weight: 400; margin-bottom: 0;">CommandMesh</h2>
-        <p style="grid-column: span 2; text-align: center; font-size: 12px; color: #888; margin-top: 0;">Private Device Network</p>
-        
+        <h2 style="grid-column: span 2; color: var(--text); text-align: center; font-weight: 500; margin-bottom: 0;">
+            CommandMesh</h2>
+        <p style="grid-column: span 2; text-align: center; font-size: var(--text-xs); color: var(--text-muted); margin-top: 0;">Private Device Network</p>
+
         <div style="grid-column: span 2;">
-            <input type="text" id="userIn" placeholder="HiveMQ Username">
-            <input type="password" id="passIn" placeholder="HiveMQ Password">
-            <input type="password" id="secretIn" placeholder="Mesh Secret (HMAC Key)">
-            <button onclick="saveAndConnect()" style="width: 100%; background: #333; margin-top: 10px;">Connect to Mesh</button>
+            <div class="input-wrapper">
+                <input type="text" id="brokerIn" placeholder="Broker URL (wss://...:8884/mqtt)">
+            </div>
+            <div class="input-wrapper">
+                <input type="text" id="userIn" placeholder="HiveMQ Username">
+            </div>
+
+            <div class="input-wrapper">
+                <input type="password" id="passIn" placeholder="HiveMQ Password">
+                <button class="toggle-btn" onclick="toggleVis('passIn', this)">
+                    <svg><use href="#icon-eye"></use></svg>
+                </button>
+            </div>
+
+            <div class="input-wrapper">
+                <input type="password" id="secretIn" placeholder="Master Passphrase">
+                <button class="toggle-btn" onclick="toggleVis('secretIn', this)">
+                    <svg><use href="#icon-eye"></use></svg>
+                </button>
+            </div>
+
+            <div style="text-align: right; margin-bottom: var(--space-4);">
+                <a class="text-link" style="display: inline-flex; align-items: center; gap: 4px;" onclick="toggleKeyGen(true)">
+                    <svg style="width: 1em; height: 1em;"><use href="#icon-key"></use></svg> Generate Node Public Key
+                </a>
+            </div>
+
+            <button id="connectBtn" class="primary" onclick="saveAndConnect()" style="width: 100%;">Connect to Mesh</button>
+        </div>
+    </div>
+
+    <!-- 1.5. Key Generator UI -->
+    <div id="keyGenView" class="grid hidden">
+        <h2 style="grid-column: span 2; color: var(--text); text-align: center; font-weight: 500; margin-bottom: 0;">
+            Key Generator</h2>
+        <p style="grid-column: span 2; text-align: center; font-size: var(--text-xs); color: var(--text-muted); margin-top: 0;">Generate your node's Public Key</p>
+
+        <div style="grid-column: span 2;">
+            <div class="input-wrapper">
+                <input type="password" id="genPassIn" placeholder="Enter your Master Passphrase">
+                <button class="toggle-btn" onclick="toggleVis('genPassIn', this)">
+                    <svg><use href="#icon-eye"></use></svg>
+                </button>
+            </div>
+
+            <button onclick="uiGenerateKey()" style="width: 100%; margin-top: var(--space-2);">Generate Key</button>
+
+            <div id="keyOutputContainer" class="hidden" style="margin-top: var(--space-6);">
+                <label style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2); display: block;">Paste this into your Node Setup page:</label>
+                <textarea id="pubKeyOutput" rows="2" readonly></textarea>
+                <button id="copyBtn" onclick="copyPubKey()" style="width: 100%; margin-top: var(--space-3);">
+                    <svg><use href="#icon-copy"></use></svg> Copy to Clipboard
+                </button>
+            </div>
+
+            <button onclick="toggleKeyGen(false)" style="width: 100%; margin-top: var(--space-6); background: transparent; border: none; color: var(--text-muted);">
+                <svg><use href="#icon-arrow-left"></use></svg> Back to Login
+            </button>
         </div>
     </div>
 
     <!-- Main Navigation Header -->
     <div class="header hidden" id="appHeader">
-        <button id="backBtn" class="header-btn hidden" onclick="showNetwork()" style="color: var(--primary);">← Network</button>
-        <span id="titleText" style="font-family: monospace; font-size: 16px;">Mesh.Net</span>
-        <button onclick="logout()" class="header-btn" style="color: #888;">Logout</button>
+        <button id="backBtn" class="header-btn hidden" onclick="showNetwork()" style="color: var(--primary);">
+            <svg><use href="#icon-arrow-left"></use></svg> Network
+        </button>
+        <span id="titleText" style="font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 500;">Mesh.Net</span>
+        <button onclick="logout()" class="header-btn">Logout</button>
     </div>
 
     <!-- 2. Device Discovery & Network View -->
     <div id="networkView" style="width: 100%; max-width: 400px;" class="hidden">
-        <div id="statusText" style="font-size: 12px; color: #888; margin-bottom: 15px;">🟡 Scanning network...</div>
+        <div id="statusText" style="font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-4); display: flex; align-items: center; gap: var(--space-2);">
+            <svg style="animation: shimmer 1s linear infinite;"><use href="#icon-loader-spin"></use></svg> Scanning network...
+        </div>
         <div id="deviceContainer">
-            <!-- Discovered devices inject here -->
+            <!-- Skeleton loaders will show here while scanning -->
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
         </div>
     </div>
 
     <!-- 3. Dynamic Remote Control View -->
     <div id="remoteView" class="grid hidden">
-        <h3 id="targetName" style="grid-column: span 2; margin-top: 0; margin-bottom: 5px; color: var(--primary);">Target Device</h3>
-        
+        <h3 id="targetName" style="grid-column: span 2; margin-top: 0; margin-bottom: var(--space-2); font-weight: 500;">
+            Target Device</h3>
+
         <!-- Media Controls -->
         <div class="section-header">Media & System</div>
-        <button onclick="sendCommand('play_pause')">⏯️ Play/Pause</button>
-        <button onclick="sendCommand('open_youtube')">📺 YouTube</button>
-        <button onclick="sendCommand('vol_down')">🔉 Vol -</button>
-        <button onclick="sendCommand('vol_up')">🔊 Vol +</button>
-        <button onclick="sendCommand('home')">🏠 Home/Desktop</button>
-        <button onclick="sendCommand('lock_pc')">🔒 Lock/Sleep</button>
+        <button onclick="sendCommand('play_pause')"><svg><use href="#icon-play-pause"></use></svg> Play/Pause</button>
+        <button onclick="sendCommand('open_youtube')"><svg><use href="#icon-monitor"></use></svg> YouTube</button>
+        <button onclick="sendCommand('vol_down')"><svg><use href="#icon-volume-down"></use></svg> Vol Down</button>
+        <button onclick="sendCommand('vol_up')"><svg><use href="#icon-volume-up"></use></svg> Vol Up</button>
+        <button onclick="sendCommand('home')"><svg><use href="#icon-home"></use></svg> Home/Desktop</button>
+        <button onclick="sendCommand('lock_pc')"><svg><use href="#icon-lock"></use></svg> Lock/Sleep</button>
 
         <!-- D-Pad Navigation -->
         <div class="section-header">Navigation</div>
         <div class="dpad">
             <div class="empty-space"></div>
-            <button onclick="sendCommand('dpad_up')">▲</button>
+            <button onclick="sendCommand('dpad_up')"><svg><use href="#icon-up"></use></svg></button>
             <div class="empty-space"></div>
-            
-            <button onclick="sendCommand('dpad_left')">◀</button>
+
+            <button onclick="sendCommand('dpad_left')"><svg><use href="#icon-left"></use></svg></button>
             <button class="center" onclick="sendCommand('dpad_center')">OK</button>
-            <button onclick="sendCommand('dpad_right')">▶</button>
-            
+            <button onclick="sendCommand('dpad_right')"><svg><use href="#icon-right"></use></svg></button>
+
             <div class="empty-space"></div>
-            <button onclick="sendCommand('dpad_down')">▼</button>
+            <button onclick="sendCommand('dpad_down')"><svg><use href="#icon-down"></use></svg></button>
             <div class="empty-space"></div>
         </div>
-        
+
         <!-- Parameterized Data Tools -->
         <div class="section-header">Advanced Tools</div>
-        <input type="text" id="customInput" placeholder="URL, text, or script.bat" style="grid-column: span 2;">
-        
-        <button onclick="sendCommand('open_url', document.getElementById('customInput').value)">🌐 Open URL</button>
-        <button onclick="sendCommand('type_text', document.getElementById('customInput').value)">⌨️ Type Text</button>
-        <button onclick="sendCommand('run_script', document.getElementById('customInput').value)" style="grid-column: span 2; border-color: #ffaa00; color: #ffaa00;">🚀 Run Script (PC Only)</button>
+        <div class="input-wrapper" style="grid-column: span 2;">
+            <input type="text" id="customInput" placeholder="URL, text, or script.bat">
+        </div>
+
+        <button onclick="sendCommand('open_url', document.getElementById('customInput').value)"><svg><use href="#icon-globe"></use></svg> Open URL</button>
+        <button onclick="sendCommand('type_text', document.getElementById('customInput').value)"><svg><use href="#icon-terminal"></use></svg> Type Text</button>
+        <button onclick="sendCommand('run_script', document.getElementById('customInput').value)"
+            style="grid-column: span 2; border-color: var(--border);"><svg><use href="#icon-code"></use></svg> Run Script (PC Only)</button>
     </div>
 
     <!-- Application Logic -->
     <script>
+        // Internal Routing Configuration
+        const BASE_TOPIC = "commandmesh";
+        const DISCOVERY_TOPIC = "commandmesh/discovery/#";
+
         let client = null;
         let currentTarget = null;
         let devices = JSON.parse(localStorage.getItem('mesh_devices')) || {};
 
+        // --- UI UTILS ---
+        function toggleVis(inputId, btn) {
+            const input = document.getElementById(inputId);
+            if (input.type === "password") {
+                input.type = "text";
+                btn.innerHTML = '<svg><use href="#icon-eye-off"></use></svg>';
+            } else {
+                input.type = "password";
+                btn.innerHTML = '<svg><use href="#icon-eye"></use></svg>';
+            }
+        }
+
+        // --- CRYPTOGRAPHY UTILS ---
+        function hexToUint8Array(hexString) {
+            return new Uint8Array(hexString.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+        }
+
+        function generateMyPublicKey(myPassword) {
+            const THE_SALT = "CommandMesh_Salt_2026_x8f9d!";
+            const seedHex = CryptoJS.SHA256(myPassword + THE_SALT).toString(CryptoJS.enc.Hex);
+            const keyPair = nacl.sign.keyPair.fromSeed(hexToUint8Array(seedHex));
+            return Array.from(keyPair.publicKey).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        // --- KEY GENERATOR UI LOGIC ---
+        function toggleKeyGen(show) {
+            if (show) {
+                document.getElementById('setupView').classList.add('hidden');
+                document.getElementById('keyGenView').classList.remove('hidden');
+                document.getElementById('genPassIn').value = document.getElementById('secretIn').value;
+            } else {
+                document.getElementById('keyGenView').classList.add('hidden');
+                document.getElementById('setupView').classList.remove('hidden');
+                document.getElementById('keyOutputContainer').classList.add('hidden');
+                document.getElementById('secretIn').value = document.getElementById('genPassIn').value;
+            }
+        }
+
+        function uiGenerateKey() {
+            const pass = document.getElementById('genPassIn').value;
+            if (!pass) return alert("Please enter a Master Passphrase first.");
+
+            const pubKeyHex = generateMyPublicKey(pass);
+            document.getElementById('pubKeyOutput').value = pubKeyHex;
+            document.getElementById('keyOutputContainer').classList.remove('hidden');
+        }
+
+        function copyPubKey() {
+            const copyText = document.getElementById("pubKeyOutput");
+            copyText.select();
+            copyText.setSelectionRange(0, 99999);
+            navigator.clipboard.writeText(copyText.value);
+
+            const btn = document.getElementById('copyBtn');
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<svg><use href="#icon-check"></use></svg> Copied!';
+            setTimeout(() => btn.innerHTML = originalHTML, 2000);
+        }
+
+        // --- APP INITIALIZATION ---
         function init() {
             if (!localStorage.getItem("mesh_secret")) {
                 document.getElementById('setupView').classList.remove('hidden');
+                if (localStorage.getItem("mesh_broker")) document.getElementById('brokerIn').value = localStorage.getItem("mesh_broker");
+                if (localStorage.getItem("mesh_user")) document.getElementById('userIn').value = localStorage.getItem("mesh_user");
             } else {
                 document.getElementById('setupView').classList.add('hidden');
                 document.getElementById('appHeader').classList.remove('hidden');
@@ -133,35 +645,70 @@
         }
 
         function saveAndConnect() {
-            localStorage.setItem("mesh_user", document.getElementById('userIn').value);
-            localStorage.setItem("mesh_pass", document.getElementById('passIn').value);
-            localStorage.setItem("mesh_secret", document.getElementById('secretIn').value);
-            init();
+            const btn = document.getElementById('connectBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<svg style="animation: shimmer 1s linear infinite;"><use href="#icon-loader-spin"></use></svg> Connecting...';
+            
+            setTimeout(() => {
+                let urlInput = document.getElementById('brokerIn').value.trim();
+
+                // --- SMART URL AUTO-FIXER ---
+                if (urlInput) {
+                    // 1. Strip any trailing slashes
+                    urlInput = urlInput.replace(/\/+$/, '');
+
+                    // 2. Remove http:// or https:// if accidentally pasted
+                    urlInput = urlInput.replace(/^https?:\/\//, '');
+
+                    // 3. Add wss:// if missing
+                    if (!urlInput.startsWith('ws')) {
+                        urlInput = 'wss://' + urlInput;
+                    }
+
+                    // 4. Auto-append HiveMQ WebSockets port and path if missing
+                    if (urlInput.includes('hivemq.cloud') && !urlInput.includes(':8884')) {
+                        urlInput += ':8884/mqtt';
+                    }
+                }
+
+                localStorage.setItem("mesh_broker", urlInput);
+                localStorage.setItem("mesh_user", document.getElementById('userIn').value);
+                localStorage.setItem("mesh_pass", document.getElementById('passIn').value);
+                localStorage.setItem("mesh_secret", document.getElementById('secretIn').value);
+                btn.disabled = false;
+                btn.innerHTML = 'Connect to Mesh';
+                init();
+            }, 300); // Small artificial delay to show loading state
         }
 
-        function logout() { 
-            localStorage.clear(); 
-            location.reload(); 
+        function logout() {
+            localStorage.removeItem("mesh_pass");
+            localStorage.removeItem("mesh_secret");
+            location.reload();
         }
 
-        // Draws the cards for devices on the network
         function renderDevices() {
             const container = document.getElementById('deviceContainer');
+            // Remove skeleton loaders if device list is empty but we have connected
+            if (Object.keys(devices).length === 0) {
+                 container.innerHTML = '<div style="text-align:center; color:var(--text-muted); font-size:var(--text-sm); padding:var(--space-4);">No devices found.</div>';
+                 return;
+            }
+            
             container.innerHTML = '';
             Object.values(devices).forEach(d => {
                 const isOnline = d.status === 'online';
                 const div = document.createElement('div');
                 div.className = 'device-card';
-                
-                // Only allow clicking if the device is currently online
-                if(isOnline) {
+
+                if (isOnline) {
                     div.onclick = () => openRemote(d.id, d.name);
                 } else {
                     div.style.opacity = '0.6';
                 }
-                
+
                 div.innerHTML = `
-                    <div><strong style="color: ${isOnline ? '#fff' : '#aaa'}">${d.name}</strong><br><span style="font-size: 10px; color: #888;">${d.id}</span></div>
+                    <div><strong style="color: ${isOnline ? 'var(--text)' : 'var(--text-muted)'}; font-weight: 500;">${d.name}</strong><br><span style="font-size: var(--text-xs); color: var(--text-muted);">${d.id}</span></div>
                     <div><span class="status-dot ${isOnline ? 'online' : 'offline'}"></span></div>
                 `;
                 container.appendChild(div);
@@ -169,24 +716,24 @@
         }
 
         function connectMQTT() {
-            client = mqtt.connect(CONFIG.BROKER_URL, {
+            const brokerUrl = localStorage.getItem("mesh_broker");
+            client = mqtt.connect(brokerUrl, {
                 username: localStorage.getItem("mesh_user"),
                 password: localStorage.getItem("mesh_pass"),
                 clientId: 'pwa_admin_' + Math.random().toString(16).substr(2, 8)
             });
 
             client.on('connect', () => {
-                document.getElementById('statusText').innerText = "🟢 Connected. Listening for devices...";
-                // Listen to all discovery broadcasts
-                client.subscribe(CONFIG.DISCOVERY_TOPIC);
+                document.getElementById('statusText').innerHTML = '<span class="status-dot online"></span> Connected. Listening for devices...';
+                client.subscribe(DISCOVERY_TOPIC);
                 renderDevices();
             });
 
             client.on('message', (topic, message) => {
-                if (topic.startsWith(CONFIG.BASE_TOPIC + "/discovery/")) {
+                if (topic.startsWith(BASE_TOPIC + "/discovery/")) {
                     try {
                         const data = JSON.parse(message.toString());
-                        devices[data.id] = data; // Update or add the device
+                        devices[data.id] = data;
                         localStorage.setItem('mesh_devices', JSON.stringify(devices));
                         renderDevices();
                     } catch (e) { console.error("Discovery parsing error"); }
@@ -194,7 +741,8 @@
             });
 
             client.on('error', (err) => {
-                document.getElementById('statusText').innerText = "🔴 Connection Error.";
+                document.getElementById('statusText').innerHTML = '<span class="status-dot offline" style="background-color: #ef4444;"></span> Connection Error.';
+                console.error("MQTT Error:", err);
             });
         }
 
@@ -215,48 +763,52 @@
             document.getElementById('targetName').innerText = name;
         }
 
-        // The core secure execution function
         function sendCommand(action, dataParam = null) {
             if (!client || !currentTarget) return;
-            
-            const secret = localStorage.getItem("mesh_secret");
-            const ts = Math.floor(Date.now() / 1000);
-            
-            // THE FIX: The PWA now identifies as the universal admin role
-            const senderId = 'mesh_admin'; 
-            
-            const msgToSign = `${action}:${senderId}:${currentTarget}:${ts}`;
-            const signature = CryptoJS.HmacSHA256(msgToSign, secret).toString(CryptoJS.enc.Hex);
 
-            const payload = JSON.stringify({ 
-                action: action, 
+            const myPassword = localStorage.getItem("mesh_secret");
+            const ts = Math.floor(Date.now() / 1000);
+            const senderId = 'mesh_admin';
+
+            const THE_SALT = "CommandMesh_Salt_2026_x8f9d!";
+            const seedHex = CryptoJS.SHA256(myPassword + THE_SALT).toString(CryptoJS.enc.Hex);
+            const keyPair = nacl.sign.keyPair.fromSeed(hexToUint8Array(seedHex));
+
+            // F-01 Fix: Format the data string exactly as Python expects it
+            const dataString = dataParam === null ? "" : String(dataParam);
+
+            // Inject dataString into the cryptographic message
+            const msgToSign = `${action}:${senderId}:${currentTarget}:${dataString}:${ts}`;
+
+            const messageUint8 = new TextEncoder().encode(msgToSign);
+            const signatureUint8 = nacl.sign.detached(messageUint8, keyPair.secretKey);
+            const signatureHex = Array.from(signatureUint8).map(b => b.toString(16).padStart(2, '0')).join('');
+
+            const payload = JSON.stringify({
+                action: action,
                 data: dataParam,
-                from: senderId, // This passes 'mesh_admin' to the Python nodes
-                to: currentTarget, 
-                timestamp: ts, 
-                signature: signature 
+                from: senderId,
+                to: currentTarget,
+                timestamp: ts,
+                signature: signatureHex
             });
 
-            client.publish(`${CONFIG.BASE_TOPIC}/${currentTarget}/in`, payload, { qos: 1 });
+            client.publish(`${BASE_TOPIC}/${currentTarget}/in`, payload, { qos: 1 });
         }
 
-        // Lifecycle Rule: Disconnect when the phone screen turns off or app is swiped away
-        // Lifecycle Rule: Disconnect when the phone screen turns off to save battery
         document.addEventListener("visibilitychange", () => {
             if (document.visibilityState === "hidden" && client) {
-                client.end(); 
-                client = null; // Clean up the old connection
+                client.end();
+                client = null;
             } else if (document.visibilityState === "visible") {
-                // Check if logged in, then ONLY reconnect the background network. 
-                // Do NOT call init() again, so the user stays on their current screen.
                 if (localStorage.getItem("mesh_secret")) {
-                    connectMQTT(); 
+                    connectMQTT();
                 }
             }
         });
 
-        // Start the app sequence
         init();
     </script>
 </body>
+
 </html>

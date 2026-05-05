@@ -20,10 +20,10 @@ Control your PC and Android devices from your phone — through the internet, on
 CommandMesh is a **private device control mesh network**. Run lightweight Python nodes on your PC or Android (Termux), then control them from a **Progressive Web App (PWA)** on your phone — from anywhere in the world.
 
 All communication is relayed through a **HiveMQ cloud MQTT broker** over TLS, meaning:
-- ✅ No port forwarding required
-- ✅ Works across different Wi-Fi networks and mobile data
-- ✅ All commands are cryptographically signed with HMAC-SHA256
-- ✅ Replay attacks are blocked by a 10-second timestamp window
+- [Yes] No port forwarding required
+- [Yes] Works across different Wi-Fi networks and mobile data
+- [Yes] All commands are cryptographically signed with HMAC-SHA256
+- [Yes] Replay attacks are blocked by a 10-second timestamp window
 
 ---
 
@@ -49,27 +49,28 @@ All communication is relayed through a **HiveMQ cloud MQTT broker** over TLS, me
 CommandMesh/
 ├── main.py                       # Universal entry point — auto-detects device & boots node
 │
-├── core/
+├── lib/
 │   └── security.py               # HMAC-SHA256 signature verification & replay attack prevention
+│
+├── config/
+│   ├── __init__.py
+│   └── allowed_scripts.py        # Allowed custom scripts configuration
 │
 ├── nodes/
 │   ├── desktop/
 │   │   ├── node.py               # Desktop node (Windows/Mac/Linux)
-│   │   ├── requirements-desktop.txt
-│   │   └── mesh_scripts/         # (gitignored) Place your .bat/.sh scripts here
+│   │   ├── requirements.txt
+│   │   └── scripts/              # (gitignored) Place your .bat/.sh scripts here
 │   │
 │   └── termux/
 │       ├── node.py               # Android node (Termux / Smart TV)
-│       └── requirements-termux.txt
+│       └── requirements.txt
 │
 ├── pwa/
 │   ├── index.html                # Full PWA controller UI (single file, no build step)
-│   ├── manifest.json             # PWA install manifest
-│   ├── config.js                 # (gitignored) Your live HiveMQ WebSocket URL
-│   └── config.example.js         # Template — copy and rename to config.js
+│   └── manifest.json             # PWA install manifest
 │
 ├── .env                          # (gitignored) Your secrets — NEVER commit this
-├── .env.example                  # Template — copy and rename to .env
 └── .gitignore
 ```
 
@@ -93,13 +94,7 @@ cd CommandMesh
 
 ### Step 2: Configure Secrets
 
-Copy the environment variable template and fill in your HiveMQ credentials:
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` and fill in your details:
+Create a `.env` file in the root directory and fill in your HiveMQ credentials:
 
 ```env
 MQTT_BROKER=YOUR_CLUSTER_ID.s1.eu.hivemq.cloud
@@ -139,31 +134,20 @@ python main.py
 
 `main.py` will automatically:
 1. Detect if it's running on Desktop or Termux (Android)
-2. Install the correct dependencies from `requirements-{device}.txt`
+2. Install the correct dependencies from `nodes/{device}/requirements.txt`
 3. Validate your `.env` configuration
 4. Run a live pre-flight TLS connection test to HiveMQ
 5. Boot the correct node script
 
 ### Step 5: Configure and Open the PWA
 
-Copy the PWA config template:
+Open `pwa/index.html` in your phone's browser (or any browser). On first launch, you will see a settings page where you can enter your configuration details:
 
-```bash
-cp pwa/config.example.js pwa/config.js
-```
+- **Broker URL:** `wss://YOUR_CLUSTER_ID.s1.eu.hivemq.cloud:8884/mqtt` (Browsers use WebSockets port 8884, NOT 8883)
+- **Username** and **Password**
+- **Mesh Secret**
 
-Open `pwa/config.js` and enter your HiveMQ **WebSocket** URL (browsers use a different port than Python nodes):
-
-```javascript
-const CONFIG = {
-    // Note: Browsers use WebSockets port (8884), NOT the standard MQTT port (8883)
-    BROKER_URL: "wss://YOUR_CLUSTER_ID.s1.eu.hivemq.cloud:8884/mqtt",
-    BASE_TOPIC: "commandmesh",
-    DISCOVERY_TOPIC: "commandmesh/discovery/#"
-};
-```
-
-Open `pwa/index.html` in your phone's browser (or any browser). On first launch, enter your HiveMQ **username**, **password**, and **Mesh Secret**. These are saved in `localStorage` — you won't need to enter them again.
+These details are securely saved in your browser's `localStorage` — you won't need to enter them again.
 
 ---
 
@@ -212,13 +196,13 @@ The node verifies the signature **before** executing any action. A message with 
 |---|---|---|---|
 | `open_url` | Opens a URL | `webbrowser.open()` | Android intent |
 | `type_text` | Types text at cursor | `pyautogui.write()` | `input text` |
-| `run_script` | Executes a script file | ✅ (from `mesh_scripts/`) | 🚫 Blocked |
+| `run_script` | Executes a script file | [Yes] (from `scripts/`) | [Blocked] |
 
 ### Custom Scripts (PC Only)
 
-Place any `.bat` or `.sh` script inside `nodes/desktop/mesh_scripts/`. From the PWA's **Advanced Tools** section, type the filename (e.g., `launch_obs.bat`) and tap **Run Script**.
+Place any `.bat` or `.sh` script inside `nodes/desktop/scripts/`. Make sure to add the script name to the allowed scripts list in `config/allowed_scripts.py`. From the PWA's **Advanced Tools** section, type the filename (e.g., `launch_obs.bat`) and tap **Run Script**.
 
-> Scripts in `mesh_scripts/` are gitignored by default to keep your automations private.
+> Scripts in `scripts/` are gitignored by default to keep your automations private.
 
 ---
 
@@ -241,17 +225,20 @@ Adding a new command is a two-step process:
 
 ## Troubleshooting
 
-**`❌ Missing critical .env variables`**
+**`[Error] Missing critical .env variables`**
 → Ensure `.env` exists in the root directory and all 5 keys are filled in.
 
-**`❌ Authentication Failed`**
+**`[Error] Authentication Failed`**
 → Double-check your HiveMQ username and password in `.env`. Ensure the cluster is active.
 
-**`❌ Script not found in mesh_scripts/`**
-→ Place the script file inside `nodes/desktop/mesh_scripts/` and use only the filename, not a path.
+**`[Error] Script not found in scripts/`**
+→ Place the script file inside `nodes/desktop/scripts/` and use only the filename, not a path.
 
-**PWA shows "🔴 Connection Error"**
-→ Verify `pwa/config.js` uses the **WebSocket URL** (`wss://...`) on **port 8884**, not 8883.
+**`[Error] Unauthorized script`**
+→ Ensure your script filename is added to `ALLOWED_SCRIPTS` in `config/allowed_scripts.py`.
+
+**PWA shows "[Error] Connection Error"**
+→ Verify your Broker URL in the PWA uses the **WebSocket URL** (`wss://...`) on **port 8884**, not 8883.
 
 **Commands are rejected on the node**
 → Ensure `MESH_SECRET` in `.env` matches exactly what you entered in the PWA login screen.
@@ -265,5 +252,5 @@ This project is open-source. Feel free to fork, modify, and build on it.
 ---
 
 <div align="center">
-Made with ☕ | <a href="https://github.com/anaconda2401/CommandMesh">github.com/anaconda2401/CommandMesh</a>
+Made with coffee | <a href="https://github.com/anaconda2401/CommandMesh">github.com/anaconda2401/CommandMesh</a>
 </div>

@@ -1,10 +1,9 @@
 .env
 .env.*
 !.env.example
+.env1
 
-pwa/config.js
-
-**pycache**/
+__pycache__/
 *.py[cod]
 *$py.class
 
@@ -31,3 +30,5 @@ report.md
 todo.md
 list.py
 nodes/desktop/scripts/*
+report2.md
+report3.md

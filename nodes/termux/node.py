@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 
-# Allow importing from the root 'lib' directory
+# 1. Allow importing from the root 'lib' directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from lib.security import verify_message
 
@@ -17,7 +17,6 @@ DEVICE_ID = "living_room_tv"
 DEVICE_NAME = "Android Smart TV"
 DEVICE_TYPE = "tv"
 
-SECRET = os.getenv("MESH_SECRET")
 BROKER = os.getenv("MQTT_BROKER")
 PORT = int(os.getenv("MQTT_PORT", 8883))
 USER = os.getenv("MQTT_USERNAME")
@@ -30,20 +29,18 @@ def execute_action(payload_data):
     action = payload_data.get("action")
     params = payload_data.get("data")
     
-    print(f"⚙️ Executing Android Action: {action} | Params: {params}")
+    print(f"[INFO] Executing Android Action: {action} | Params: {params}")
     
     # --- SECURE PARAMETERIZED ACTIONS ---
     if action == "open_url" and params:
         parsed = urlparse(params)
         if parsed.scheme in ("http", "https"):
-            # SAFE: Passed as a list to subprocess without shell=True
             subprocess.run(
                 ["am", "start", "-a", "android.intent.action.VIEW", "-d", params],
                 shell=False, check=False
             )
             
     elif action == "type_text" and params:
-        # SAFE: Cannot break out of the string context
         subprocess.run(["input", "text", str(params)], shell=False, check=False)
 
     # --- STANDARD SYSTEM COMMANDS ---
@@ -52,11 +49,7 @@ def execute_action(payload_data):
     elif action == "lock_pc":
         subprocess.run(["input", "keyevent", "26"], shell=False, check=False)
     elif action == "open_youtube":
-        # SAFE: Passed as a list, no shell interpolation
-        subprocess.run(
-            ["am", "start", "-a", "android.intent.action.VIEW", "-d", "https://www.youtube.com"],
-            shell=False, check=False
-        )
+        subprocess.run(["am", "start", "-a", "android.intent.action.VIEW", "-d", "https://www.youtube.com"], shell=False, check=False)
         
     # --- MEDIA CONTROLS ---
     elif action == "vol_up":
@@ -80,11 +73,11 @@ def execute_action(payload_data):
 
     # --- SECURITY EXCLUSION ---
     elif action == "run_script":
-        print("🛡️ Security Block: Scripts are not permitted on this device.")
+        print("[SECURITY] Block: Scripts are not permitted on this device.")
 
 def on_connect(client, userdata, flags, reason_code, properties):
     if reason_code == 0:
-        print(f"✅ Termux Node '{DEVICE_ID}' connected.")
+        print(f"[SUCCESS] Termux Node '{DEVICE_ID}' connected.")
         client.subscribe(TOPIC_INBOX)
         
         status_payload = json.dumps({"id": DEVICE_ID, "name": DEVICE_NAME, "type": DEVICE_TYPE, "status": "online"})
@@ -95,7 +88,8 @@ def on_message(client, userdata, msg):
         data = json.loads(msg.payload.decode())
         if data.get("to") != DEVICE_ID: return
         
-        if not verify_message(SECRET, data): return
+        # Passes the payload to security check
+        if not verify_message(data): return
         
         execute_action(data)
     except Exception as e:
@@ -105,15 +99,26 @@ client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv5)
 client.tls_set()
 client.username_pw_set(USER, PASS)
 
+# Setup Last Will and Testament for unexpected drops
 lwt_payload = json.dumps({"id": DEVICE_ID, "name": DEVICE_NAME, "type": DEVICE_TYPE, "status": "offline"})
 client.will_set(TOPIC_DISCOVERY, lwt_payload, retain=True)
 
 client.on_connect = on_connect
 client.on_message = on_message
 
-print(f"🚀 Booting Android Termux Node: {DEVICE_ID}...")
+print(f"[INFO] Booting Android Termux Node: {DEVICE_ID}...")
 # Prevents Android from killing Termux in the background
 os.system("termux-wake-lock") 
 
-client.connect(BROKER, PORT, 60)
-client.loop_forever()
+# Graceful Disconnect Handling
+try:
+    client.connect(BROKER, PORT, 60)
+    client.loop_forever()
+except KeyboardInterrupt:
+    print(f"\n[INFO] Shutting down '{DEVICE_ID}'. Broadcasting offline status...")
+    client.publish(TOPIC_DISCOVERY, lwt_payload, retain=True)
+    client.loop_write() 
+    client.disconnect()
+    # Release the wakelock so your phone can sleep again
+    os.system("termux-wake-unlock")
+    print("[SUCCESS] Disconnected cleanly.")
