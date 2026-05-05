@@ -16,7 +16,7 @@ for pk_hex in PUB_KEYS_STR.split(","):
         except Exception as e:
             print(f"[WARNING] Could not load a public key: {e}")
 
-# F-03 Fix: Temporary cache to track and reject reused signatures
+# Temporary cache to track and reject reused signatures
 SEEN_SIGNATURES = {}
 
 def verify_message(data: dict, max_age: int = 10) -> bool:
@@ -28,12 +28,12 @@ def verify_message(data: dict, max_age: int = 10) -> bool:
         current_time = time.time()
         time_diff = current_time - data['timestamp']
         
-        # F-04 Fix: Prevent future timestamps while allowing 5s for clock drift
+        # Prevent future timestamps while allowing 5s for clock drift
         if time_diff > max_age or time_diff < -5:
             print("[SECURITY] Rejected: Message expired or from the future.")
             return False
 
-        # F-03 Fix: Strict Replay Check
+        # Strict Replay Check
         sig = data['signature']
         if sig in SEEN_SIGNATURES:
             print("[SECURITY] Rejected: Replay attack detected. Signature already processed.")
@@ -49,12 +49,16 @@ def verify_message(data: dict, max_age: int = 10) -> bool:
             print(f"[SECURITY] Rejected: Unauthorized role '{sender_role}'")
             return False
 
-        # F-01 Fix: Payload Tampering Prevention
+        # Payload Tampering Prevention
         # Convert data to string securely, defaulting to empty string if None
         payload_data = str(data.get('data', '')) if data.get('data') is not None else ''
         
-        # The math now strictly includes the payload data
-        msg = f"{data['action']}:{sender_role}:{data['to']}:{payload_data}:{data['timestamp']}"
+        # NEW: Extract the unique message ID (defaults to empty string if missing)
+        msg_id = str(data.get('msg_id', ''))
+        
+        # NEW: The math now strictly includes the payload data AND the msg_id
+        msg = f"{data['action']}:{sender_role}:{data['to']}:{payload_data}:{data['timestamp']}:{msg_id}"
+        
         msg_bytes = msg.encode('utf-8')
         sig_bytes = bytes.fromhex(sig)
 

@@ -225,7 +225,7 @@ def test_connection(creds):
             error_msg = f"Connection refused (Code: {rc})"
         client.disconnect()
 
-    client = mqtt.Client(protocol=mqtt.MQTTv311)
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
     client.tls_set()
     client.username_pw_set(creds["user"], creds["pass"])
     client.on_connect = on_connect

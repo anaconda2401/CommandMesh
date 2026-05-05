@@ -726,18 +726,30 @@
             client.on('connect', () => {
                 document.getElementById('statusText').innerHTML = '<span class="status-dot online"></span> Connected. Listening for devices...';
                 client.subscribe(DISCOVERY_TOPIC);
+                
+                // NEW: Also subscribe to outboxes to receive ACKs from nodes
+                client.subscribe("commandmesh/+/out");
+                
                 renderDevices();
             });
 
             client.on('message', (topic, message) => {
-                if (topic.startsWith(BASE_TOPIC + "/discovery/")) {
-                    try {
-                        const data = JSON.parse(message.toString());
+                try {
+                    const data = JSON.parse(message.toString());
+                    
+                    // Handle Device Discovery
+                    if (topic.startsWith(BASE_TOPIC + "/discovery/")) {
                         devices[data.id] = data;
                         localStorage.setItem('mesh_devices', JSON.stringify(devices));
                         renderDevices();
-                    } catch (e) { console.error("Discovery parsing error"); }
-                }
+                    }
+                    
+                    // Handle Optional ACKs returned from nodes
+                    if (topic.endsWith("/out") && data.msg_id) {
+                        console.log(`[ACK Received] Command ${data.action} on ${data.id} returned: ${data.status} - ${data.message}`);
+                    }
+                    
+                } catch (e) { console.error("JSON parsing error"); }
             });
 
             client.on('error', (err) => {
@@ -769,16 +781,18 @@
             const myPassword = localStorage.getItem("mesh_secret");
             const ts = Math.floor(Date.now() / 1000);
             const senderId = 'mesh_admin';
+            
+            // NEW: Generate a unique ID for every single button press
+            const uniqueMsgId = "req_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
 
             const THE_SALT = "CommandMesh_Salt_2026_x8f9d!";
             const seedHex = CryptoJS.SHA256(myPassword + THE_SALT).toString(CryptoJS.enc.Hex);
             const keyPair = nacl.sign.keyPair.fromSeed(hexToUint8Array(seedHex));
 
-            // F-01 Fix: Format the data string exactly as Python expects it
             const dataString = dataParam === null ? "" : String(dataParam);
 
-            // Inject dataString into the cryptographic message
-            const msgToSign = `${action}:${senderId}:${currentTarget}:${dataString}:${ts}`;
+            // NEW: Inject uniqueMsgId into the cryptographic signature string
+            const msgToSign = `${action}:${senderId}:${currentTarget}:${dataString}:${ts}:${uniqueMsgId}`;
 
             const messageUint8 = new TextEncoder().encode(msgToSign);
             const signatureUint8 = nacl.sign.detached(messageUint8, keyPair.secretKey);
@@ -790,6 +804,7 @@
                 from: senderId,
                 to: currentTarget,
                 timestamp: ts,
+                msg_id: uniqueMsgId, // NEW: Include the ID in the payload
                 signature: signatureHex
             });
 

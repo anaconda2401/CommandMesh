@@ -169,7 +169,7 @@ def on_message(client, userdata, msg):
         print(f"[ERR] {e}")
 
 # Downgraded to MQTTv311 for lower memory footprint
-client = mqtt.Client(protocol=mqtt.MQTTv311)
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv311)
 client.tls_set()
 client.username_pw_set(USER, PASS)
 
