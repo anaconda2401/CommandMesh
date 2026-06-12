@@ -3,7 +3,7 @@ import sys
 import json
 import subprocess
 import shutil
-import shlex  # RESTORED: Vital for safe shell execution on Android
+import shlex
 from urllib.parse import urlparse
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
@@ -43,6 +43,24 @@ try:
 except AttributeError:
     IS_NATIVE_ROOT = False
 
+ROOT_SHELL = None
+
+def init_persistent_shell():
+    
+    global ROOT_SHELL
+    try:
+        ROOT_SHELL = subprocess.Popen(
+            ["su"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1
+        )
+    except Exception as e:
+        print(f"[FATAL] Failed to start persistent root shell: {e}")
+        sys.exit(1)
+
 def detect_termux_mode():
     if IS_NATIVE_ROOT: return "native_root"
     if shutil.which("su"): return "su_wrapper"
@@ -51,6 +69,9 @@ def detect_termux_mode():
     sys.exit(1)
 
 TERMUX_MODE = detect_termux_mode()
+
+if TERMUX_MODE == "su_wrapper":
+    init_persistent_shell()
 
 # ==========================================
 # BOOT DIAGNOSTICS (ASCII ONLY)
@@ -62,7 +83,7 @@ print("="*40)
 if TERMUX_MODE == "native_root":
     print(" MODE: [OK] NATIVE ROOT (0-Latency)")
 elif TERMUX_MODE == "su_wrapper":
-    print(" MODE: [*] SU WRAPPER")
+    print(" MODE: [*] SU PERSISTENT SHELL (Ultra-Fast)")
 else:
     print(f" MODE: [*] ADB -> {ADB_TARGET}")
 
@@ -79,16 +100,25 @@ print("="*40 + "\n")
 # COMMAND ROUTER (MEMORY OPTIMIZED & SAFE)
 # ==========================================
 def run_android_cmd(cmd_list):
+    global ROOT_SHELL
     try:
         if TERMUX_MODE == "native_root":
             res = subprocess.run(cmd_list, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
             return res.returncode == 0, "Executed"
             
         elif TERMUX_MODE == "su_wrapper":
-            # RESTORED: shlex.join() prevents URLs with '&' from breaking the root shell
+            # 1. Check if the shell unexpectedly died. Restart if necessary.
+            if ROOT_SHELL.poll() is not None:
+                print("[WARNING] Root shell died. Restarting...")
+                init_persistent_shell()
+                
+            # 2. Format safely and pipe instantly into the open shell
             safe_cmd_str = shlex.join(cmd_list)
-            res = subprocess.run(["su", "-c", safe_cmd_str], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
-            return res.returncode == 0, "Executed"
+            ROOT_SHELL.stdin.write(f"{safe_cmd_str}\n")
+            ROOT_SHELL.stdin.flush()
+            
+            # Fire-and-forget successful write
+            return True, "Executed (Piped)"
             
         else:
             # ADB Mode
@@ -100,8 +130,8 @@ def run_android_cmd(cmd_list):
 
     except subprocess.TimeoutExpired:
         return False, "Timeout"
-    except Exception:
-        return False, "Error"
+    except Exception as e:
+        return False, f"Error: {str(e)}"
 
 # ==========================================
 # ACTION HANDLER
@@ -159,13 +189,11 @@ def on_message(client, userdata, msg):
                 "message": detail
             }
             client.publish(TOPIC_OUTBOX, json.dumps(ack_payload))
-            # Minimal log for ACK confirmation
             print(f"[ACK] {msg_id}")
             
     except json.JSONDecodeError:
-        pass # Ignore bad JSON quietly
+        pass 
     except Exception as e:
-        # Minimal Error Log (so you aren't debugging in the dark)
         print(f"[ERR] {e}")
 
 # Downgraded to MQTTv311 for lower memory footprint
@@ -184,6 +212,15 @@ try:
     client.loop_forever()
 except KeyboardInterrupt:
     print(f"\n[INFO] Shutting down...")
+    
+    # Safely close the persistent shell pipe
+    if ROOT_SHELL is not None and ROOT_SHELL.poll() is None:
+        try:
+            ROOT_SHELL.stdin.close()
+            ROOT_SHELL.terminate()
+        except Exception:
+            pass
+            
     client.publish(TOPIC_DISCOVERY, lwt_payload, retain=True)
     client.loop_write() 
     client.disconnect()

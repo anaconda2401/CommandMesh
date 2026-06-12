@@ -5,6 +5,7 @@ import time
 import argparse
 import threading
 import socket
+import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs
 
@@ -37,7 +38,6 @@ def install_dependencies(device_type):
             [sys.executable, "-m", "pip", "install", "-r", req_file, "--quiet"],
             check=True
         )
-        # Mark as installed so it skips this slow step on future boots
         open(DEPS_FLAG, 'w').close()
         print("[SUCCESS] Dependencies installed.")
     except subprocess.CalledProcessError:
@@ -74,8 +74,8 @@ import html
 import secrets
 
 CSRF_TOKEN = secrets.token_hex(16)
+SETUP_TOKEN = secrets.token_urlsafe(16)
 
-# Get the local IP address so the user knows where to connect
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -89,7 +89,32 @@ def get_local_ip():
 LOCAL_IP = get_local_ip()
 
 class ConfigDashboardHandler(BaseHTTPRequestHandler):
+    
+    def check_url_token(self):
+        """Validates that the connection is using the secret URL token."""
+        parsed_path = urllib.parse.urlparse(self.path)
+        query = parse_qs(parsed_path.query)
+        provided_token = query.get("token", [""])[0]
+        
+        if not secrets.compare_digest(provided_token, SETUP_TOKEN):
+            self.send_response(403)
+            self.end_headers()
+            self.wfile.write(b"<h1>403 Forbidden</h1><p>Invalid or missing Setup Token.</p>")
+            print(f"[SECURITY] Blocked unauthorized access attempt from {self.client_address[0]}")
+            return False
+        return True
+
     def do_GET(self):
+        # Ignore automatic browser icon requests to prevent false security alarms
+        if self.path == '/favicon.ico':
+            self.send_response(204)
+            self.end_headers()
+            return
+
+        # SECURITY: Enforce URL token on page load
+        if not self.check_url_token():
+            return
+            
         load_dotenv(ENV_FILE, override=True)
         
         broker = html.escape(os.getenv("MQTT_BROKER", ""))
@@ -118,7 +143,7 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         <body>
             <div class="container">
                 <h2>Node Setup</h2>
-                <form method="POST">
+                <form method="POST" action="/?token={SETUP_TOKEN}">
                     <input type="hidden" name="csrf_token" value="{CSRF_TOKEN}">
                     
                     <div style="border-bottom: 1px solid #333; margin-bottom: 20px; padding-bottom: 10px;">
@@ -159,6 +184,9 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(html_content.encode('utf-8'))
 
     def do_POST(self):
+        if not self.check_url_token():
+            return
+            
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length).decode('utf-8')
         parsed_data = parse_qs(post_data)
@@ -199,7 +227,6 @@ class ConfigDashboardHandler(BaseHTTPRequestHandler):
         pass
 
 def run_dashboard():
-    # Bind to 0.0.0.0 so headless devices (like TVs) can be configured from a phone
     host, port = '0.0.0.0', 8080
     server = HTTPServer((host, port), ConfigDashboardHandler)
     server.serve_forever()
@@ -231,11 +258,9 @@ def test_connection(creds):
     client.on_connect = on_connect
 
     try:
-        # Prevent infinite hang by using a short loop instead of loop_forever()
         client.connect(creds["broker"], 8883, 10)
         client.loop_start()
         
-        # Wait up to 5 seconds for connection resolution
         timeout = 5
         start_time = time.time()
         while not connected and error_msg is None and (time.time() - start_time) < timeout:
@@ -283,15 +308,18 @@ if __name__ == "__main__":
             print("[INFO] Created new empty .env file.")
             
         print("\n[SYSTEM] Launching Setup Dashboard...")
-        print(f"[INFO] GO TO: http://{LOCAL_IP}:8080 (or http://127.0.0.1:8080) in your browser to configure.")
+        print(f"[SECURE LINK] http://{LOCAL_IP}:8080/?token={SETUP_TOKEN}")
+        print("[WARNING] Do not share this link. It provides administrative access to this node.")
         
-        threading.Thread(target=run_dashboard, daemon=True).start()
+        # Track the server thread so we can wait for it properly
+        server_thread = threading.Thread(target=run_dashboard, daemon=True)
+        server_thread.start()
         
-        # 5 Minute timeout so the script doesn't hang forever in the background
         timeout_seconds = 300
         start_wait = time.time()
         
-        while get_missing_keys():
+        # Wait for the user to click 'Save' (which shuts down the server)
+        while server_thread.is_alive():
             if time.time() - start_wait > timeout_seconds:
                 print("\n[ERROR] Setup timeout exceeded (5 minutes). Exiting.")
                 sys.exit(1)
