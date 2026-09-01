@@ -1,79 +1,71 @@
 import os
-import time
 import json
-from nacl.signing import VerifyKey
-from nacl.encoding import HexEncoder
-from nacl.exceptions import BadSignatureError
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Signature Verification Toggle
+# Controlled via SIGNATURE_VERIFICATION=true|false in the .env file.
+# Default: enabled (true) — set to 'false' only on trusted private networks.
+# ──────────────────────────────────────────────────────────────────────────────
+_sig_env = os.getenv("SIGNATURE_VERIFICATION", "true").strip().lower()
+SIGNATURE_VERIFICATION_ENABLED = _sig_env not in ("false", "0", "no", "off")
 
 REQUIRED_ROLE = os.getenv("REQUIRED_ROLE", "mesh_admin")
-PUB_KEYS_STR = os.getenv("MESH_PUBLIC_KEYS", "")
 
+# Only load PyNaCl / public keys when verification is actually enabled.
 VERIFIERS = []
-for pk_hex in PUB_KEYS_STR.split(","):
-    pk_hex = pk_hex.strip()
-    if pk_hex:
-        try:
-            VERIFIERS.append(VerifyKey(pk_hex, encoder=HexEncoder))
-        except Exception as e:
-            print(f"[WARNING] Could not load a public key: {e}")
+if SIGNATURE_VERIFICATION_ENABLED:
+    try:
+        from nacl.signing import VerifyKey
+        from nacl.encoding import HexEncoder
+        from nacl.exceptions import BadSignatureError as _BadSigError
+    except ImportError:
+        print("[WARNING] PyNaCl not installed. Signature verification will be disabled.")
+        SIGNATURE_VERIFICATION_ENABLED = False
+        _BadSigError = Exception  # fallback so the module still loads
 
-# In-memory protection state
-SEEN_SIGNATURES = {}
-LAST_CLEANUP = 0
-MAX_CACHE_SIZE = 1000
+    if SIGNATURE_VERIFICATION_ENABLED:
+        PUB_KEYS_STR = os.getenv("MESH_PUBLIC_KEYS", "")
+        for pk_hex in PUB_KEYS_STR.split(","):
+            pk_hex = pk_hex.strip()
+            if pk_hex:
+                try:
+                    VERIFIERS.append(VerifyKey(pk_hex, encoder=HexEncoder))
+                except Exception as e:
+                    print(f"[WARNING] Could not load a public key: {e}")
+else:
+    _BadSigError = Exception  # fallback reference so the function body is valid
 
-def cleanup_cache(current_time: float, max_age: int):
-    """Throttled TTL cleanup to prevent memory leaks and save CPU."""
-    global LAST_CLEANUP
-    
-    # O(1) Fail-safe: Clear cache if overwhelmed (e.g., DDoS of valid signatures)
-    if len(SEEN_SIGNATURES) > MAX_CACHE_SIZE:
-        SEEN_SIGNATURES.clear()
-        LAST_CLEANUP = current_time
-        print("[WARNING] Cache limit exceeded. Cleared to prevent memory exhaustion.")
-        return
+# Boot-time status line so the operator knows what mode is active.
+if SIGNATURE_VERIFICATION_ENABLED:
+    print(f"[SECURITY] Ed25519 signature verification: ENABLED ({len(VERIFIERS)} key(s) loaded)")
+else:
+    print("[SECURITY] !! Ed25519 signature verification: DISABLED (trust-all mode) !!")
 
-    # Throttle: Only run the O(n) cleanup loop once every 5 seconds
-    if current_time - LAST_CLEANUP < 5:
-        return
-        
-    LAST_CLEANUP = current_time
-    
-    expired = [sig for sig, ts in SEEN_SIGNATURES.items() if (current_time - ts) > max_age]
-    for sig in expired:
-        del SEEN_SIGNATURES[sig]
 
-def verify_message(data: dict, max_age: int = 10) -> bool:
+def verify_message(data: dict) -> bool:
+    """
+    Validate an incoming MQTT command payload.
+
+    When SIGNATURE_VERIFICATION_ENABLED is True  → full Ed25519 check (PyNaCl).
+    When SIGNATURE_VERIFICATION_ENABLED is False → role-only check, no crypto.
+    """
+    # ── 1. Role Authorization (always enforced) ───────────────────────────────
+    sender_role = data.get('from')
+    if sender_role != REQUIRED_ROLE:
+        print(f"[SECURITY] Rejected: Unauthorized role '{sender_role}'")
+        return False
+
+    # ── 2. Skip cryptography when feature is disabled ────────────────────────
+    if not SIGNATURE_VERIFICATION_ENABLED:
+        return True
+
+    # ── 3. Require at least one loaded public key ─────────────────────────────
     if not VERIFIERS:
         print("[ERROR] Missing or invalid MESH_PUBLIC_KEYS in .env")
         return False
 
     try:
-        current_time = time.time()
-        time_diff = current_time - data['timestamp']
-        
-        # 1. Prevent future timestamps while allowing 5s for clock drift
-        if time_diff > max_age or time_diff < -5:
-            print("[SECURITY] Rejected: Message expired or from the future.")
-            return False
-
-        # 2. Clean up old memory (Throttled TTL)
-        cleanup_cache(current_time, max_age)
-
-        # 3. Strict Replay Check
-        sig = data['signature']
-        if sig in SEEN_SIGNATURES:
-            print("[SECURITY] Rejected: Replay attack detected.")
-            return False
-
-        # 4. Role Authorization
-        sender_role = data.get('from')
-        if sender_role != REQUIRED_ROLE:
-            print(f"[SECURITY] Rejected: Unauthorized role '{sender_role}'")
-            return False
-
-        # 5. Cryptographic Construction (Deterministic)
-        # If 'data' is a dictionary, we MUST sort keys so the string hash matches the sender perfectly
+        # 4. Reconstruct the canonical message string (must match PWA exactly)
         raw_data = data.get('data')
         if isinstance(raw_data, dict):
             payload_data = json.dumps(raw_data, sort_keys=True, separators=(',', ':'))
@@ -81,30 +73,24 @@ def verify_message(data: dict, max_age: int = 10) -> bool:
             payload_data = str(raw_data)
         else:
             payload_data = ''
-            
-        msg_id = str(data.get('msg_id', ''))
-        
-        # Exact match required against PWA frontend
-        msg = f"{data['action']}:{sender_role}:{data['to']}:{payload_data}:{data['timestamp']}:{msg_id}"
-        
-        msg_bytes = msg.encode('utf-8')
-        sig_bytes = bytes.fromhex(sig)
 
-        # 6. Verification
+        msg_id = str(data.get('msg_id', ''))
+        msg = f"{data['action']}:{sender_role}:{data['to']}:{payload_data}:{data['timestamp']}:{msg_id}"
+
+        msg_bytes = msg.encode('utf-8')
+        sig_bytes = bytes.fromhex(data['signature'])
+
+        # 5. Try each registered public key
         for verifier in VERIFIERS:
             try:
                 verifier.verify(msg_bytes, sig_bytes)
-                
-                # IMPORTANT: Store `current_time` for accurate TTL, not the payload's timestamp.
-                SEEN_SIGNATURES[sig] = current_time
-                return True 
-                
-            except BadSignatureError:
+                return True
+            except _BadSigError:
                 continue
 
         print("[SECURITY] Rejected: Invalid Signature! Fake admin detected.")
         return False
-        
+
     except KeyError:
-        print("[ERROR] Rejected: Malformed payload.")
+        print("[ERROR] Rejected: Malformed payload (missing required field).")
         return False

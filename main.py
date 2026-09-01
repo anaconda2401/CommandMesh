@@ -1,13 +1,6 @@
 import os
 import sys
 import subprocess
-import time
-import argparse
-import threading
-import socket
-import urllib.parse
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import parse_qs
 
 ENV_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".env"))
 DEPS_FLAG = os.path.abspath(os.path.join(os.path.dirname(__file__), ".deps_installed"))
@@ -59,7 +52,7 @@ install_dependencies(device_type)
 # ==========================================
 try:
     import paho.mqtt.client as mqtt
-    from dotenv import load_dotenv, set_key
+    from dotenv import load_dotenv
 except ImportError as e:
     print(f"[ERROR] Critical Error: Modules failed to load. ({e})")
     print("[INFO] Attempting to fix... deleting .deps_installed flag.")
@@ -68,176 +61,9 @@ except ImportError as e:
     sys.exit(1)
 
 # ==========================================
-# Phase 3: Web Dashboard Server
+# Phase 3: Core Execution & Logic
 # ==========================================
-import html
-import secrets
-
-CSRF_TOKEN = secrets.token_hex(16)
-SETUP_TOKEN = secrets.token_urlsafe(16)
-
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
-
-LOCAL_IP = get_local_ip()
-
-class ConfigDashboardHandler(BaseHTTPRequestHandler):
-    
-    def check_url_token(self):
-        """Validates that the connection is using the secret URL token."""
-        parsed_path = urllib.parse.urlparse(self.path)
-        query = parse_qs(parsed_path.query)
-        provided_token = query.get("token", [""])[0]
-        
-        if not secrets.compare_digest(provided_token, SETUP_TOKEN):
-            self.send_response(403)
-            self.end_headers()
-            self.wfile.write(b"<h1>403 Forbidden</h1><p>Invalid or missing Setup Token.</p>")
-            print(f"[SECURITY] Blocked unauthorized access attempt from {self.client_address[0]}")
-            return False
-        return True
-
-    def do_GET(self):
-        # Ignore automatic browser icon requests to prevent false security alarms
-        if self.path == '/favicon.ico':
-            self.send_response(204)
-            self.end_headers()
-            return
-
-        # SECURITY: Enforce URL token on page load
-        if not self.check_url_token():
-            return
-            
-        load_dotenv(ENV_FILE, override=True)
-        
-        broker = html.escape(os.getenv("MQTT_BROKER", ""))
-        username = html.escape(os.getenv("MQTT_USERNAME", ""))
-        public_keys = html.escape(os.getenv("MESH_PUBLIC_KEYS", ""))
-        node_id = html.escape(os.getenv("NODE_ID", ""))
-        node_name = html.escape(os.getenv("NODE_NAME", ""))
-
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>CommandMesh Setup</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                :root {{ --bg: #0f0f0f; --surface: #1e1e1e; --primary: #00ffaa; --text: #ffffff; }}
-                body {{ font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; justify-content: center; padding: 20px; margin: 0; }}
-                .container {{ background: var(--surface); padding: 30px; border-radius: 10px; width: 100%; max-width: 400px; border: 1px solid #333; }}
-                h2 {{ color: var(--primary); text-align: center; margin-top: 0; }}
-                label {{ font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 1px; }}
-                input {{ width: 100%; padding: 12px; margin: 8px 0 20px; background: #222; color: #fff; border: 1px solid #333; border-radius: 8px; box-sizing: border-box; font-size: 14px; }}
-                button {{ width: 100%; padding: 15px; background: #333; color: var(--text); border: 1px solid #444; border-radius: 10px; font-size: 15px; cursor: pointer; transition: 0.2s; }}
-                button:hover {{ background: var(--primary); color: #000; border-color: var(--primary); }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2>Node Setup</h2>
-                <form method="POST" action="/?token={SETUP_TOKEN}">
-                    <input type="hidden" name="csrf_token" value="{CSRF_TOKEN}">
-                    
-                    <div style="border-bottom: 1px solid #333; margin-bottom: 20px; padding-bottom: 10px;">
-                        <label style="color: var(--primary);">Device Identity</label>
-                    </div>
-
-                    <label>Node ID (No Spaces, e.g. laptop_1)</label>
-                    <input type="text" name="NODE_ID" value="{node_id}" required>
-
-                    <label>Display Name (e.g. My Work Laptop)</label>
-                    <input type="text" name="NODE_NAME" value="{node_name}" required>
-
-                    <div style="border-bottom: 1px solid #333; margin-bottom: 20px; padding-bottom: 10px;">
-                        <label style="color: var(--primary);">Network Security</label>
-                    </div>
-                    
-                    <label>MQTT Broker URL</label>
-                    <input type="text" name="MQTT_BROKER" value="{broker}" placeholder="e.g., wss://cluster.hivemq.cloud:8884/mqtt" required>
-
-                    <label>MQTT Username</label>
-                    <input type="text" name="MQTT_USERNAME" value="{username}" required>
-
-                    <label>MQTT Password</label>
-                    <input type="password" name="MQTT_PASSWORD" placeholder="Enter password to update">
-
-                    <label>Mesh Public Keys (VIP List)</label>
-                    <input type="text" name="MESH_PUBLIC_KEYS" value="{public_keys}" placeholder="Paste your public hex key here" required>
-                    
-                    <button type="submit">Save & Boot Node</button>
-                </form>
-            </div>
-        </body>
-        </html>
-        """
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(html_content.encode('utf-8'))
-
-    def do_POST(self):
-        if not self.check_url_token():
-            return
-            
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length).decode('utf-8')
-        parsed_data = parse_qs(post_data)
-
-        submitted_token = parsed_data.get("csrf_token", [""])[0]
-        if not secrets.compare_digest(submitted_token, CSRF_TOKEN):
-            self.send_response(403)
-            self.end_headers()
-            self.wfile.write(b"Security Block: CSRF token validation failed.")
-            print("[SECURITY] CSRF Attack Blocked.")
-            return
-
-        if not os.path.exists(ENV_FILE):
-            open(ENV_FILE, 'a').close()
-
-        valid_keys = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS", "NODE_ID", "NODE_NAME"]
-        for key in valid_keys:
-            if key in parsed_data and parsed_data[key][0].strip():
-                value = parsed_data[key][0].strip()
-                if key == "NODE_ID":
-                    value = value.replace(" ", "_").lower()
-                set_key(ENV_FILE, key, value)
-
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        success_html = """
-        <div style="font-family: system-ui, sans-serif; background: #0f0f0f; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #00ffaa;">[OK] Saved & Secured!</h2>
-            <p style="color: #888;">Configuration applied. The local server is shutting down.</p>
-        </div>
-        """
-        self.wfile.write(success_html.encode('utf-8'))
-        
-        threading.Thread(target=self.server.shutdown, daemon=True).start()
-
-    def log_message(self, format, *args):
-        pass
-
-def run_dashboard():
-    host, port = '0.0.0.0', 8080
-    server = HTTPServer((host, port), ConfigDashboardHandler)
-    server.serve_forever()
-    
-# ==========================================
-# Phase 4: Core Execution & Logic
-# ==========================================
-def get_missing_keys():
-    load_dotenv(ENV_FILE, override=True)
-    required = ["MQTT_BROKER", "MQTT_USERNAME", "MQTT_PASSWORD", "MESH_PUBLIC_KEYS", "NODE_ID", "NODE_NAME"]
-    return [k for k in required if not os.getenv(k)]
+import time
 
 def test_connection(creds):
     print("[SYSTEM] Testing secure connection to cloud relay...")
@@ -260,19 +86,19 @@ def test_connection(creds):
     try:
         client.connect(creds["broker"], 8883, 10)
         client.loop_start()
-        
+
         timeout = 5
         start_time = time.time()
         while not connected and error_msg is None and (time.time() - start_time) < timeout:
             time.sleep(0.1)
-            
+
         client.loop_stop()
-        
+
         if not connected and error_msg is None:
-             error_msg = "Connection timed out."
-             
+            error_msg = "Connection timed out."
+
     except Exception as e:
-        print(f"[ERROR] Network Error: Could not reach HiveMQ server. {e}")
+        print(f"[ERROR] Network Error: Could not reach broker. {e}")
         sys.exit(1)
 
     if not connected:
@@ -284,7 +110,7 @@ def launch_node(node_type):
     if not os.path.exists(node_script):
         print(f"[ERROR] Critical Error: Could not find {node_script}")
         sys.exit(1)
-        
+
     print(f"[INFO] Handing over to {node_type} module...\n" + "-"*40)
     try:
         subprocess.run([sys.executable, "-O", node_script])
@@ -293,46 +119,22 @@ def launch_node(node_type):
         sys.exit(0)
 
 # ==========================================
-# Phase 5: Main Boot Sequence
+# Phase 4: Main Boot Sequence
 # ==========================================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-d", "--dashboard", action="store_true", help="Force launch the config dashboard")
-    args = parser.parse_args()
-
-    missing_keys = get_missing_keys()
-
-    if missing_keys or args.dashboard:
-        if not os.path.exists(ENV_FILE):
-            open(ENV_FILE, 'w').close()
-            print("[INFO] Created new empty .env file.")
-            
-        print("\n[SYSTEM] Launching Setup Dashboard...")
-        print(f"[SECURE LINK] http://{LOCAL_IP}:8080/?token={SETUP_TOKEN}")
-        print("[WARNING] Do not share this link. It provides administrative access to this node.")
-        
-        # Track the server thread so we can wait for it properly
-        server_thread = threading.Thread(target=run_dashboard, daemon=True)
-        server_thread.start()
-        
-        timeout_seconds = 300
-        start_wait = time.time()
-        
-        # Wait for the user to click 'Save' (which shuts down the server)
-        while server_thread.is_alive():
-            if time.time() - start_wait > timeout_seconds:
-                print("\n[ERROR] Setup timeout exceeded (5 minutes). Exiting.")
-                sys.exit(1)
-            time.sleep(1)
-            
-        print("\n[SUCCESS] Configuration received! Proceeding...")
-
     load_dotenv(ENV_FILE, override=True)
+
     creds = {
         "broker": os.getenv("MQTT_BROKER"),
-        "user": os.getenv("MQTT_USERNAME"),
-        "pass": os.getenv("MQTT_PASSWORD")
+        "user":   os.getenv("MQTT_USERNAME"),
+        "pass":   os.getenv("MQTT_PASSWORD"),
     }
-    
+
+    missing = [k for k, v in creds.items() if not v]
+    if missing:
+        print(f"[ERROR] Missing required configuration: {', '.join(missing)}")
+        print("[INFO]  Copy .env.example to .env and fill in your credentials.")
+        sys.exit(1)
+
     test_connection(creds)
     launch_node(device_type)

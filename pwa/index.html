@@ -335,6 +335,81 @@
             stroke-linecap: round;
             stroke-linejoin: round;
         }
+
+        /* Signature Toggle Switch */
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: var(--space-3);
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            margin-bottom: var(--space-4);
+            cursor: pointer;
+            transition: border-color var(--transition);
+        }
+
+        .toggle-row:hover {
+            border-color: var(--primary);
+        }
+
+        .toggle-row label {
+            cursor: pointer;
+            font-size: var(--text-sm);
+            color: var(--text);
+            user-select: none;
+        }
+
+        .toggle-row .toggle-meta {
+            font-size: var(--text-xs);
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 42px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .switch input { opacity: 0; width: 0; height: 0; }
+
+        .slider {
+            position: absolute;
+            inset: 0;
+            background: var(--border);
+            border-radius: 24px;
+            transition: background var(--transition);
+        }
+
+        .slider::before {
+            content: "";
+            position: absolute;
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: white;
+            border-radius: 50%;
+            transition: transform var(--transition);
+        }
+
+        .switch input:checked + .slider { background: var(--primary); }
+        .switch input:checked + .slider::before { transform: translateX(18px); }
+
+        .sig-warning {
+            font-size: var(--text-xs);
+            color: #f59e0b;
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: var(--radius-md);
+            padding: var(--space-2) var(--space-3);
+            margin-bottom: var(--space-4);
+            display: none;
+        }
     </style>
 </head>
 
@@ -451,17 +526,37 @@
                 </button>
             </div>
 
-            <div class="input-wrapper">
-                <input type="password" id="secretIn" placeholder="Master Passphrase">
-                <button class="toggle-btn" onclick="toggleVis('secretIn', this)">
-                    <svg><use href="#icon-eye"></use></svg>
-                </button>
+            <!-- Signature Toggle -->
+            <div class="toggle-row" onclick="toggleSigSwitch()">
+                <div>
+                    <label for="sigToggle">Ed25519 Signature</label>
+                    <div class="toggle-meta" id="sigToggleMeta">Cryptographic auth enabled</div>
+                </div>
+                <label class="switch" onclick="event.stopPropagation()">
+                    <input type="checkbox" id="sigToggle" checked onchange="onSigToggleChange()">
+                    <span class="slider"></span>
+                </label>
             </div>
 
-            <div style="text-align: right; margin-bottom: var(--space-4);">
-                <a class="text-link" style="display: inline-flex; align-items: center; gap: 4px;" onclick="toggleKeyGen(true)">
-                    <svg style="width: 1em; height: 1em;"><use href="#icon-key"></use></svg> Generate Node Public Key
-                </a>
+            <!-- Warning shown when signature is disabled -->
+            <div class="sig-warning" id="sigWarning">
+                &#9888; Trust-all mode: commands will NOT be signed. Ensure the node also has
+                <code>SIGNATURE_VERIFICATION=false</code> in its <code>.env</code>.
+            </div>
+
+            <div id="secretWrapper">
+                <div class="input-wrapper">
+                    <input type="password" id="secretIn" placeholder="Master Passphrase">
+                    <button class="toggle-btn" onclick="toggleVis('secretIn', this)">
+                        <svg><use href="#icon-eye"></use></svg>
+                    </button>
+                </div>
+
+                <div style="text-align: right; margin-bottom: var(--space-4);">
+                    <a class="text-link" style="display: inline-flex; align-items: center; gap: 4px;" onclick="toggleKeyGen(true)">
+                        <svg style="width: 1em; height: 1em;"><use href="#icon-key"></use></svg> Generate Node Public Key
+                    </a>
+                </div>
             </div>
 
             <button id="connectBtn" class="primary" onclick="saveAndConnect()" style="width: 100%;">Connect to Mesh</button>
@@ -583,6 +678,39 @@
             }
         }
 
+        // --- SIGNATURE TOGGLE UI ---
+        function toggleSigSwitch() {
+            const chk = document.getElementById('sigToggle');
+            chk.checked = !chk.checked;
+            onSigToggleChange();
+        }
+
+        function onSigToggleChange() {
+            const enabled = document.getElementById('sigToggle').checked;
+            const meta    = document.getElementById('sigToggleMeta');
+            const warning = document.getElementById('sigWarning');
+            const wrapper = document.getElementById('secretWrapper');
+
+            if (enabled) {
+                meta.textContent = 'Cryptographic auth enabled';
+                warning.style.display = 'none';
+                wrapper.style.display = 'block';
+            } else {
+                meta.textContent = 'Trust-all mode (no crypto)';
+                warning.style.display = 'block';
+                wrapper.style.display = 'none';
+            }
+        }
+
+        // Restore toggle state on page load
+        function restoreSigToggle() {
+            const saved = localStorage.getItem('mesh_sig_enabled');
+            // Default to true (enabled) when nothing is stored
+            const enabled = saved === null ? true : saved === 'true';
+            document.getElementById('sigToggle').checked = enabled;
+            onSigToggleChange();
+        }
+
         // --- CRYPTOGRAPHY UTILS ---
         function hexToUint8Array(hexString) {
             return new Uint8Array(hexString.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
@@ -632,7 +760,14 @@
 
         // --- APP INITIALIZATION ---
         function init() {
-            if (!localStorage.getItem("mesh_secret")) {
+            restoreSigToggle();
+            const sigEnabled = document.getElementById('sigToggle').checked;
+            // Allow connecting without a secret when signatures are off
+            const hasAuth = sigEnabled
+                ? !!localStorage.getItem("mesh_secret")
+                : !!localStorage.getItem("mesh_broker");
+
+            if (!hasAuth) {
                 document.getElementById('setupView').classList.remove('hidden');
                 if (localStorage.getItem("mesh_broker")) document.getElementById('brokerIn').value = localStorage.getItem("mesh_broker");
                 if (localStorage.getItem("mesh_user")) document.getElementById('userIn').value = localStorage.getItem("mesh_user");
@@ -671,10 +806,19 @@
                     }
                 }
 
+                // Persist signature toggle preference
+                const sigEnabled = document.getElementById('sigToggle').checked;
+                localStorage.setItem('mesh_sig_enabled', String(sigEnabled));
+
                 localStorage.setItem("mesh_broker", urlInput);
                 localStorage.setItem("mesh_user", document.getElementById('userIn').value);
                 localStorage.setItem("mesh_pass", document.getElementById('passIn').value);
-                localStorage.setItem("mesh_secret", document.getElementById('secretIn').value);
+                if (sigEnabled) {
+                    localStorage.setItem("mesh_secret", document.getElementById('secretIn').value);
+                } else {
+                    // Clear any stale secret so init() re-shows login if sig is re-enabled later
+                    localStorage.removeItem("mesh_secret");
+                }
                 btn.disabled = false;
                 btn.innerHTML = 'Connect to Mesh';
                 init();
@@ -778,37 +922,39 @@
         function sendCommand(action, dataParam = null) {
             if (!client || !currentTarget) return;
 
-            const myPassword = localStorage.getItem("mesh_secret");
-            const ts = Math.floor(Date.now() / 1000);
-            const senderId = 'mesh_admin';
-            
-            // NEW: Generate a unique ID for every single button press
+            const ts         = Math.floor(Date.now() / 1000);
+            const senderId   = 'mesh_admin';
             const uniqueMsgId = "req_" + Date.now() + "_" + Math.floor(Math.random() * 10000);
+            const sigEnabled  = localStorage.getItem('mesh_sig_enabled') !== 'false';
 
-            const THE_SALT = "CommandMesh_Salt_2026_x8f9d!";
-            const seedHex = CryptoJS.SHA256(myPassword + THE_SALT).toString(CryptoJS.enc.Hex);
-            const keyPair = nacl.sign.keyPair.fromSeed(hexToUint8Array(seedHex));
-
-            const dataString = dataParam === null ? "" : String(dataParam);
-
-            // NEW: Inject uniqueMsgId into the cryptographic signature string
-            const msgToSign = `${action}:${senderId}:${currentTarget}:${dataString}:${ts}:${uniqueMsgId}`;
-
-            const messageUint8 = new TextEncoder().encode(msgToSign);
-            const signatureUint8 = nacl.sign.detached(messageUint8, keyPair.secretKey);
-            const signatureHex = Array.from(signatureUint8).map(b => b.toString(16).padStart(2, '0')).join('');
-
-            const payload = JSON.stringify({
-                action: action,
-                data: dataParam,
-                from: senderId,
-                to: currentTarget,
+            let payloadObj = {
+                action:    action,
+                data:      dataParam,
+                from:      senderId,
+                to:        currentTarget,
                 timestamp: ts,
-                msg_id: uniqueMsgId, // NEW: Include the ID in the payload
-                signature: signatureHex
-            });
+                msg_id:    uniqueMsgId
+            };
 
-            client.publish(`${BASE_TOPIC}/${currentTarget}/in`, payload, { qos: 1 });
+            if (sigEnabled) {
+                // ── Ed25519 Signature Path ──────────────────────────────────
+                const myPassword = localStorage.getItem("mesh_secret");
+                const THE_SALT   = "CommandMesh_Salt_2026_x8f9d!";
+                const seedHex    = CryptoJS.SHA256(myPassword + THE_SALT).toString(CryptoJS.enc.Hex);
+                const keyPair    = nacl.sign.keyPair.fromSeed(hexToUint8Array(seedHex));
+
+                const dataString  = dataParam === null ? "" : String(dataParam);
+                const msgToSign   = `${action}:${senderId}:${currentTarget}:${dataString}:${ts}:${uniqueMsgId}`;
+                const messageU8   = new TextEncoder().encode(msgToSign);
+                const sigU8       = nacl.sign.detached(messageU8, keyPair.secretKey);
+                const signatureHex = Array.from(sigU8).map(b => b.toString(16).padStart(2, '0')).join('');
+
+                payloadObj.signature = signatureHex;
+            }
+            // When sigEnabled is false, no 'signature' field is added.
+            // The node must have SIGNATURE_VERIFICATION=false in its .env.
+
+            client.publish(`${BASE_TOPIC}/${currentTarget}/in`, JSON.stringify(payloadObj), { qos: 1 });
         }
 
         document.addEventListener("visibilitychange", () => {
