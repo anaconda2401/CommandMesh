@@ -1,33 +1,57 @@
+# Environment variables & secrets
 .env
 .env.*
 !.env.example
 .env1
 
+# Python bytecode & cache
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyd
 
+# Virtual environments
 .venv/
 venv/
 env/
 ENV/
 
-*.log
-*.tmp
-*.temp
+# Testing & Coverage
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-.DS_Store
-Thumbs.db
-
-.vscode/
-.idea/
-*.swp
-
+# Build & packaging artifacts
 dist/
 build/
 *.egg-info/
+*.egg
+
+# Logs & temp files
+*.log
+*.tmp
+*.temp
+.deps_installed
 report.md
 todo.md
 list.py
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Desktop Node scripts (ignore custom user scripts, keep .gitkeep and test samples)
 nodes/desktop/scripts/*
-.deps_installed
+!nodes/desktop/scripts/.gitkeep
+!nodes/desktop/scripts/test.bat
+!nodes/desktop/scripts/test.py

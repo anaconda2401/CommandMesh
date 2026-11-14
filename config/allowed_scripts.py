@@ -1,13 +1,13 @@
 # config/allowed_scripts.py
 
-# THE SCRIPT WHITELIST
-# Only scripts explicitly listed here are allowed to run via the 'run_script' command.
+# NOTE: Desktop nodes now use Directory-as-Allowlist.
+# Any executable placed inside `nodes/desktop/scripts/` is automatically allowed,
+# verified via `Path.resolve().is_relative_to(SCRIPTS_DIR)` to strictly prevent traversal.
+# This legacy list is retained for backwards-compatibility.
 ALLOWED_SCRIPTS = {
     "test_ping.bat",
     "start_dev_server.bat",
     "backup_project.ps1",
     "python_task.py",
-    "test.py"
+    "test.py",
 }
-
-# You can add future shared configurations here later (e.g., specific port numbers for local network bridging)
